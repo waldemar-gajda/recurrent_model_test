@@ -165,33 +165,20 @@ class DualCognitiveEngine:
         self.preemption_count = 0
         self.status = "Inicjalizacja modeli..."
         self.is_ready = False
+        self.loading_in_progress = False
         self.hippo_active = False
 
     def initialize_both_models(self):
-        """Wczytuje oba modele do pamięci operacyjnej."""
+        """Wczytuje model Kory Wykonawczej (LLaMA-3-8B) do pamięci operacyjnej."""
+        self.loading_in_progress = True
         try:
-            # 1. Load Hippocampus (SmolLM2-1.7B)
-            self.status = "Ładowanie Hipokampa (SmolLM2-1.7B)..."
-            print(f"  [Cognitive OS] Loading Sensory Hippocampus ({self.hippo_path}) on {self.device}...")
-            self.hippo_tok = AutoTokenizer.from_pretrained(self.hippo_path)
-            if self.hippo_tok.pad_token is None:
-                self.hippo_tok.pad_token = self.hippo_tok.eos_token
-            
-            dtype = torch.bfloat16 if self.device == "mps" else torch.float32
-            self.hippo_model = AutoModelForCausalLM.from_pretrained(
-                self.hippo_path,
-                dtype=dtype,
-            ).to(self.device)
-            self.hippo_model.eval()
-            print("  [Cognitive OS] ✓ Hippocampus loaded.")
-
-            # 2. Load Cortex (LLaMA-3-8B)
             self.status = "Ładowanie Kory Wykonawczej (LLaMA-3-8B)..."
             print(f"  [Cognitive OS] Loading Executive Cortex ({self.cortex_path}) on {self.device}...")
             self.cortex_tok = AutoTokenizer.from_pretrained(self.cortex_path)
             if self.cortex_tok.pad_token is None:
                 self.cortex_tok.pad_token = self.cortex_tok.eos_token
 
+            dtype = torch.bfloat16 if self.device == "mps" else torch.float32
             self.cortex_model = AutoModelForCausalLM.from_pretrained(
                 self.cortex_path,
                 dtype=dtype,
@@ -201,11 +188,13 @@ class DualCognitiveEngine:
             print("  [Cognitive OS] ✓ Executive Cortex loaded.")
 
             self.is_ready = True
-            self.status = "Dual-Engine Gotowy (Hipokamp 1.7B + Kora 8B)"
-            print(f"  [Cognitive OS] Dual Cognitive Runtime fully operational on {self.device.upper()}.")
+            self.status = "System Gotowy (Kora LLaMA-3-8B + Hipokamp O(1))"
+            print(f"  [Cognitive OS] Cognitive Runtime fully operational on {self.device.upper()}.")
         except Exception as e:
             self.status = f"Błąd inicjalizacji: {e}"
             print(f"  [Cognitive OS] ✗ Initialization failed: {e}")
+        finally:
+            self.loading_in_progress = False
 
     # ── Source Cleaning & Semantic Distillation into Hippocampus ─────────────
 
@@ -213,20 +202,24 @@ class DualCognitiveEngine:
         """
         Oczyszcza surowy tekst dokumentu (np. z PDF):
         - Łączy słowa rozbite dywizem na końcu linii (np. 'luxu-\\nry' -> 'luxury')
+        - Łączy liczby i symbole rozbite przez PDF (np. '95\\n%' -> '95%')
         - Łączy linie wewnątrz akapitów rozbite przez formatowanie PDF
-        - Usuwa powtarzalne stopki, numery stron i szum redakcyjny
+        - Usuwa powtarzalne stopki, nagłówki i szum redakcyjny (nie kasując kluczowych danych liczbowych)
         """
-        # 1. Łączenie słów rozdzielonych łącznikiem na końcu linii
-        t = re.sub(r'(\w+)-\s*\n\s*(\w+)', r'\1\2', text)
-        # 2. Łączenie linii wewnątrz zdań (usuwa pojedyncze \n niepoprzedzone kropką/dwukropkiem)
+        # 1. Łączenie liczb z procentami lub jednostkami rozbitych enterem
+        t = re.sub(r'(\d+)\s*\n\s*(%|mln|mld|tys\.|proc\.)', r'\1\2', text)
+        # 2. Łączenie słów rozdzielonych łącznikiem na końcu linii
+        t = re.sub(r'(\w+)-\s*\n\s*(\w+)', r'\1\2', t)
+        # 3. Łączenie linii wewnątrz zdań (usuwa pojedyncze \n niepoprzedzone kropką/dwukropkiem)
         t = re.sub(r'(?<![.!?:\n])\n(?![A-Z0-9\n])', ' ', t)
-        # 3. Filtr szumu: linie będące numerami stron, licencjami, pustymi nagłówkami
+        # 4. Filtr szumu: linie będące numerami stron lub formułkami wydawniczymi
         cleaned_lines = []
         for line in t.split('\n'):
             l_strip = line.strip()
             if not l_strip:
                 continue
-            if re.match(r'^(page\s+\d+(\s+of\s+\d+)?|\d+)$', l_strip, re.IGNORECASE):
+            # Tylko jawne nagłówki stron usuwamy, nigdy same cyfry (np. 95, 637 na slajdach)
+            if re.match(r'^(page\s+\d+(\s+of\s+\d+)?|strona\s+\d+(\s+z\s+\d+)?)$', l_strip, re.IGNORECASE):
                 continue
             if any(term in l_strip.lower() for term in ['all rights reserved', 'doi: 10.', 'isbn 978-', 'printed in', 'taylor & francis', 'contents', 'index']):
                 continue
@@ -243,12 +236,19 @@ class DualCognitiveEngine:
         """
         self.hippo_active = True
         try:
+            # Jeśli Kora jest aktywnie ładowana w tle, poczekaj na zakończenie
+            if self.cortex_model is None and self.loading_in_progress:
+                wait_sec = 0
+                while self.cortex_model is None and self.loading_in_progress and wait_sec < 30:
+                    time.sleep(0.5)
+                    wait_sec += 1
+
             cleaned_text = self.clean_source_text(full_text)
             if not cleaned_text.strip():
                 return []
 
             # Podział na akapity
-            paragraphs = [p.strip() for p in cleaned_text.split('\n\n') if len(p.strip()) > 30]
+            paragraphs = [p.strip() for p in cleaned_text.split('\n\n') if len(p.strip()) > 25]
             if not paragraphs:
                 return []
 
@@ -290,7 +290,9 @@ class DualCognitiveEngine:
                                     "content": (
                                         "Jesteś precyzyjnym modułem kognitywnym asystenta. Przeanalizuj poniższy fragment tekstu "
                                         "i wyodrębnij z niego od 3 do 5 kluczowych, merytorycznych faktów (definicje, tezy, dane liczbowe, rynki, strategie). "
-                                        "Każdy fakt zapisz w nowej linii zaczynając od myślnika '- '. Pisz po polsku, zwięźle i precyzyjnie. "
+                                        "Każdy fakt zapisz w nowej linii zaczynając od myślnika '- '. "
+                                        "Pisz wyłącznie pełnymi, poprawnymi gramatycznie zdaniami w języku polskim. "
+                                        "Uzupełnij kontekstowo urwane słowa ze slajdów. "
                                         "Żadnych wstępów ani komentarzy pobocznych."
                                     )
                                 },
@@ -737,7 +739,7 @@ HTML_FRONTEND = """<!DOCTYPE html>
                   onpaste="handleNotePaste(event)"
                   class="w-full bg-slate-950/80 border border-slate-700 rounded-lg p-2.5 text-xs text-slate-200 placeholder-slate-500 outline-none focus:border-sky-500 transition resize-none"></textarea>
         <button onclick="submitPastedContext()" class="w-full bg-slate-800 hover:bg-slate-700 text-sky-400 font-medium py-1.5 rounded-lg text-xs border border-slate-700 transition">
-          + Ingestuj do pamięci Hipokampa
+          + Zapisz fakty w pamięci Hipokampa
         </button>
       </div>
 
@@ -802,7 +804,7 @@ HTML_FRONTEND = """<!DOCTYPE html>
       <!-- Autonomous Dynamic Status Badges (NO manual model selector!) -->
       <div class="flex items-center space-x-3 text-xs font-mono">
         <div id="hippoBadge" class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-950/60 border border-emerald-800 text-emerald-300">
-          <span class="w-2 h-2 rounded-full bg-emerald-400"></span> Pamięć Robocza O(1)
+          <span class="w-2 h-2 rounded-full bg-emerald-400"></span> Hipokamp: Pamięć Robocza O(1)
         </div>
         <div id="cortexBadge" class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 text-slate-400">
           <span class="w-2 h-2 rounded-full bg-slate-600"></span> Kora 8B (Uśpiona)
@@ -856,7 +858,7 @@ HTML_FRONTEND = """<!DOCTYPE html>
         </div>
       </div>
       <div class="text-[11px] text-center text-slate-500 mt-2">
-        Architektura Baddeleya: Hipokamp (1.7B) asymiluje dane w tle → Kora (8B) wnioskuje z pamięci roboczej O(1).
+        Architektura Baddeleya: Kora (LLaMA-3-8B) asymiluje materiał do pamięci roboczej Hipokampa O(1) i odpowiada z niej na żądanie.
       </div>
     </div>
 
@@ -901,14 +903,30 @@ HTML_FRONTEND = """<!DOCTYPE html>
       const hBadge = document.getElementById('hippoBadge');
       if (active) {
         cBadge.className = 'flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-950/80 border border-amber-600 text-amber-300 animate-pulse';
-        cBadge.innerHTML = '<span class="w-2 h-2 rounded-full bg-amber-400"></span> ⚡ Kora 8B (Wywłaszczenie - Generuje)';
-        hBadge.className = 'flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 text-slate-500';
-        hBadge.innerHTML = '<span class="w-2 h-2 rounded-full bg-slate-600"></span> Hipokamp (Wstrzymany)';
+        cBadge.innerHTML = '<span class="w-2 h-2 rounded-full bg-amber-400"></span> ⚡ Kora 8B (Odpowiada...)';
+        hBadge.className = 'flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 text-slate-400';
+        hBadge.innerHTML = '<span class="w-2 h-2 rounded-full bg-slate-600"></span> Hipokamp: Bufor O(1)';
       } else {
         cBadge.className = 'flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 text-slate-400';
         cBadge.innerHTML = '<span class="w-2 h-2 rounded-full bg-slate-600"></span> Kora 8B (Uśpiona)';
         hBadge.className = 'flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-950/60 border border-emerald-800 text-emerald-300';
-        hBadge.innerHTML = '<span class="w-2 h-2 rounded-full bg-emerald-400"></span> Hipokamp 1.7B (Ingestia)';
+        hBadge.innerHTML = '<span class="w-2 h-2 rounded-full bg-emerald-400"></span> Hipokamp: Pamięć Robocza O(1)';
+      }
+    }
+
+    function setCortexDistilling(active) {
+      const cBadge = document.getElementById('cortexBadge');
+      const hBadge = document.getElementById('hippoBadge');
+      if (active) {
+        cBadge.className = 'flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-950/80 border border-amber-600 text-amber-300';
+        cBadge.innerHTML = '<span class="w-2 h-2 rounded-full bg-amber-400 animate-spin"></span> Kora 8B (Destyluje wiedzę...)';
+        hBadge.className = 'flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-950/60 border border-emerald-800 text-emerald-300';
+        hBadge.innerHTML = '<span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> Hipokamp: Zapisuje fakty...';
+      } else {
+        cBadge.className = 'flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 text-slate-400';
+        cBadge.innerHTML = '<span class="w-2 h-2 rounded-full bg-slate-600"></span> Kora 8B (Uśpiona)';
+        hBadge.className = 'flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-950/60 border border-emerald-800 text-emerald-300';
+        hBadge.innerHTML = '<span class="w-2 h-2 rounded-full bg-emerald-400"></span> Hipokamp: Pamięć Robocza O(1)';
       }
     }
 
@@ -1074,13 +1092,12 @@ HTML_FRONTEND = """<!DOCTYPE html>
       const titleEl = document.getElementById('uploadTitle');
       const subEl = document.getElementById('uploadSubtitle');
       const iconEl = document.getElementById('uploadIcon');
-      const hippoBadge = document.getElementById('hippoBadge');
 
       const originalTitle = 'Wgraj dokument (PDF, TXT, MD)';
       titleEl.innerText = `Analiza: ${file.name.substring(0, 16)}...`;
       subEl.innerText = 'Kora destyluje fakty do pamięci...';
       iconEl.innerText = '⏳';
-      hippoBadge.innerHTML = '<span class="w-2 h-2 rounded-full bg-amber-400 animate-spin"></span> Kora destyluje fakty...';
+      setCortexDistilling(true);
 
       const formData = new FormData();
       formData.append('file', file);
@@ -1126,6 +1143,7 @@ HTML_FRONTEND = """<!DOCTYPE html>
         titleEl.innerText = originalTitle;
         iconEl.innerText = '📄';
       } finally {
+        setCortexDistilling(false);
         document.getElementById('fileInput').value = '';
       }
     }
@@ -1146,6 +1164,7 @@ HTML_FRONTEND = """<!DOCTYPE html>
       if (!text) return;
       input.value = '';
       input.placeholder = 'Kora analizuje notatkę i zapisuje fakty...';
+      setCortexDistilling(true);
 
       try {
         const res = await fetch('/api/ingest_text', {
@@ -1173,6 +1192,7 @@ HTML_FRONTEND = """<!DOCTYPE html>
       } catch (err) {
         console.error(err);
       } finally {
+        setCortexDistilling(false);
         input.placeholder = 'Wklej dowolny artykuł, umowę lub notatkę (auto-analiza)...';
       }
     }
