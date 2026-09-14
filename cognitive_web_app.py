@@ -26,6 +26,7 @@ import time
 import webbrowser
 import contextlib
 from typing import Any, Dict, List, Optional
+from pathlib import Path
 
 try:
     import psutil
@@ -204,12 +205,25 @@ class ModelManager:
         self._detect_hf_cache()
 
     def _detect_hf_cache(self):
+        # 1. Sprawdź lokalne katalogi projektu
+        base_dir = Path(__file__).parent
+        local_checks = {
+            "SmolLM2-135M": base_dir / "smollm2-135m-instruct",
+            "LLaMA-3-8B": base_dir / "llama-3-8b-instruct",
+        }
+        for name, p in local_checks.items():
+            if p.exists() and any(p.glob("*.safetensors")):
+                if name not in self.cached_models:
+                    self.cached_models.append(name)
+
+        # 2. Sprawdź centralny cache Hugging Face (~/.cache/huggingface/hub)
         cache_dir = os.path.expanduser("~/.cache/huggingface/hub")
         if os.path.exists(cache_dir):
             try:
                 for name, meta in self.AVAILABLE_MODELS.items():
                     hub_folder = "models--" + meta["hf_id"].replace("/", "--")
-                    if os.path.exists(os.path.join(cache_dir, hub_folder)):
+                    hub_path = os.path.join(cache_dir, hub_folder)
+                    if os.path.exists(hub_path):
                         if name not in self.cached_models:
                             self.cached_models.append(name)
             except Exception:
