@@ -629,15 +629,15 @@ HTML_FRONTEND = """<!DOCTYPE html>
     <div class="p-4 space-y-4 flex-1 overflow-y-auto">
       
       <!-- Upload File Zone -->
-      <div class="border-2 border-dashed border-slate-700 hover:border-sky-500 rounded-xl p-4 text-center cursor-pointer transition bg-slate-800/40"
-           onclick="document.getElementById('fileInput').click()"
-           ondragover="event.preventDefault()"
+      <label for="fileInput" id="uploadDropzone" class="block border-2 border-dashed border-slate-700 hover:border-sky-500 rounded-xl p-4 text-center cursor-pointer transition bg-slate-800/40"
+           ondragover="event.preventDefault(); this.classList.add('border-sky-400');"
+           ondragleave="this.classList.remove('border-sky-400');"
            ondrop="handleFileDrop(event)">
-        <input type="file" id="fileInput" class="hidden" onchange="uploadSelectedFile(event)" accept=".pdf,.txt,.md,.json,.py,.csv,.log" />
-        <div class="text-2xl mb-1">📄</div>
-        <div class="text-xs font-medium text-slate-200">Wgraj dokument (PDF, TXT, MD)</div>
-        <div class="text-[11px] text-slate-400 mt-1">Hipokamp przetrawi cały plik w tle</div>
-      </div>
+        <input type="file" id="fileInput" class="hidden" onchange="uploadSelectedFile(event)" onclick="this.value=''" accept=".pdf,.txt,.md,.json,.py,.csv,.log" />
+        <div id="uploadIcon" class="text-2xl mb-1">📄</div>
+        <div id="uploadTitle" class="text-xs font-medium text-slate-200">Wgraj dokument (PDF, TXT, MD)</div>
+        <div id="uploadSubtitle" class="text-[11px] text-slate-400 mt-1">Kliknij tutaj lub upuść plik</div>
+      </label>
 
       <!-- Quick Paste Context Area -->
       <div class="space-y-1.5">
@@ -956,33 +956,75 @@ HTML_FRONTEND = """<!DOCTYPE html>
     }
 
     async function uploadSelectedFile(e) {
-      const file = e.target.files[0];
+      const file = (e.target && e.target.files && e.target.files.length > 0) ? e.target.files[0] : (e.files ? e.files[0] : null);
       if (!file) return;
+
+      const titleEl = document.getElementById('uploadTitle');
+      const subEl = document.getElementById('uploadSubtitle');
+      const iconEl = document.getElementById('uploadIcon');
+      const hippoBadge = document.getElementById('hippoBadge');
+
+      const originalTitle = 'Wgraj dokument (PDF, TXT, MD)';
+      titleEl.innerText = `Indeksowanie: ${file.name.substring(0, 16)}...`;
+      subEl.innerText = 'Hipokamp mieli tekst w tle...';
+      iconEl.innerText = '⏳';
+      hippoBadge.innerHTML = '<span class="w-2 h-2 rounded-full bg-amber-400 animate-spin"></span> Hipokamp trawi plik...';
+
       const formData = new FormData();
       formData.append('file', file);
-
-      // UI visual feedback
-      document.getElementById('hippoBadge').innerHTML = '<span class="w-2 h-2 rounded-full bg-amber-400 animate-spin"></span> Hipokamp trawi plik...';
 
       try {
         const res = await fetch('/api/upload_file', { method: 'POST', body: formData });
         const data = await res.json();
         if (data.ok) {
-          refreshState();
+          titleEl.innerText = '✓ Wgrano pomyślnie!';
+          subEl.innerText = `${Math.round(data.chars / 1000)}k zn., ${data.facts_extracted} faktów`;
+          iconEl.innerText = '✅';
+
+          // Add visible confirmation card directly into chat
+          const chatContainer = document.getElementById('chatContainer');
+          const noticeDiv = document.createElement('div');
+          noticeDiv.className = 'bg-emerald-950/50 border border-emerald-700/80 p-3.5 rounded-2xl max-w-xl text-xs text-emerald-200 mx-auto text-center space-y-1 my-2';
+          noticeDiv.innerHTML = `
+            <div class="font-bold text-emerald-300 flex items-center justify-center gap-1.5">
+              <span>📄</span> Wgrano dokument: ${escapeHtml(data.filename)}
+            </div>
+            <div class="text-[11px] text-emerald-400">
+              Hipokamp zindeksował <strong>${data.facts_extracted} kluczowych faktów</strong> (${Math.round(data.chars / 1000)}k znaków). Kora Wykonawcza jest gotowa do odpowiedzi!
+            </div>
+          `;
+          chatContainer.appendChild(noticeDiv);
+          scrollChat();
+
+          setTimeout(() => {
+            titleEl.innerText = 'Wgraj kolejny dokument';
+            subEl.innerText = 'Kliknij tutaj lub upuść plik';
+            iconEl.innerText = '📄';
+          }, 4000);
+
+          await refreshState();
         } else {
-          alert(`Błąd: ${data.error}`);
+          alert(`Błąd wczytywania: ${data.error}`);
+          titleEl.innerText = originalTitle;
+          iconEl.innerText = '📄';
         }
       } catch (err) {
-        alert('Błąd wysyłania pliku');
+        console.error(err);
+        alert('Błąd połączenia z serwerem. Upewnij się, że serwer jest uruchomiony w terminalu.');
+        titleEl.innerText = originalTitle;
+        iconEl.innerText = '📄';
+      } finally {
+        document.getElementById('fileInput').value = '';
       }
     }
 
     function handleFileDrop(e) {
       e.preventDefault();
+      const dropzone = document.getElementById('uploadDropzone');
+      if (dropzone) dropzone.classList.remove('border-sky-400');
       const files = e.dataTransfer.files;
-      if (files.length > 0) {
-        document.getElementById('fileInput').files = files;
-        uploadSelectedFile({ target: { files } });
+      if (files && files.length > 0) {
+        uploadSelectedFile({ files: files });
       }
     }
 
