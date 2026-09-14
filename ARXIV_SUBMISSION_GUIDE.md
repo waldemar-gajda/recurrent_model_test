@@ -38,7 +38,7 @@ In this work, we present a comprehensive formalization, empirical scaling evalua
 
 We prove that this architecture guarantees strict O(1) space complexity and O(1) per-token decoding latency. Across a five-tier empirical scaling benchmark spanning 1.6k -> 20k -> 1.53M -> 10.97M -> 109.7M tokens, the system achieves 100% factual recall while maintaining a flat hardware footprint (delta RSS <= 3.1 MB across 110 million tokens). We formally document and correct a historical 1,000x unit reporting discrepancy in early literature (0.08 GB mislabeled as 0.08 MB), proving an exact hardware KV-cache reduction factor exceeding 182,900x (from 14.04 TB down to 78.6 MB on LLaMA-3-8B, and 32 KB on tensor-level slot memory banks).
 
-Finally, we report an exhaustive zero-trust adversarial red-team audit exposing critical failure modes in heuristic text-distillation prototypes (distractor needle spoofing, syntactic collapse, negation blindness, and out-of-distribution drift), delineate the boundary between symbolic prompt distillation and neural tensor recurrence, establish five concrete architectural mitigations, and propose an open-source intellectual property strategy governed by the GNU Affero General Public License v3 (AGPLv3) paired with commercial dual-licensing.
+Finally, we report an exhaustive zero-trust adversarial red-team audit exposing critical failure modes in heuristic text-distillation prototypes (distractor needle spoofing, syntactic collapse, negation blindness, and out-of-distribution drift), delineate the boundary between symbolic prompt distillation and neural tensor recurrence, and establish five concrete architectural mitigations to guide future research.
 ```
 
 ---
