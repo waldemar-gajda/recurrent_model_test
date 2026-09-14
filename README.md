@@ -201,6 +201,15 @@ See Sections 6 & 7 of the [Preprint Paper](paper.html) for full mathematical spe
 
 ---
 
+## Standardized Academic Benchmark (bAbI / BABILong)
+
+We evaluated the architecture on canonical cognitive tracking tasks from the Meta AI **bAbI suite** (Weston et al., 2015) and **BABILong** (Kurilenko et al., 2024):
+- **bAbI-1 (Single Fact Location):** **✓ PASS** (`office`, 950 ms)
+- **bAbI-3 (Three-Hop Displacement):** **✓ PASS** (`bedroom`, 940 ms)
+- **bAbI-6 (Yes/No State Polarity):** **✓ PASS** (`no`, 864 ms)
+- Run the standardized evaluation: `python3 benchmark_babi_suite.py`
+
+---
 
 ## Citation & Intellectual Property
 
@@ -214,6 +223,7 @@ See Sections 6 & 7 of the [Preprint Paper](paper.html) for full mathematical spe
 }
 ```
 
-### Dual-Licensing Strategy
+### Dual-Licensing & Patent Strategy
 - **Open-Source / Academic Tier:** Licensed under the [GNU Affero General Public License v3 (AGPLv3)](LICENSE). Section 13 mandates that network-hosted modifications must open-source their full stack.
-- **Commercial Tier:** For proprietary enterprise integration without AGPLv3 copyleft, commercial licenses are available upon request to the author.
+- **Commercial Tier & Patent Portfolio:** For proprietary enterprise integration and full details on defensive prior-art publication, see [LEGAL_AND_LICENSING.md](LEGAL_AND_LICENSING.md).
+

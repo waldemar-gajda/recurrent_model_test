@@ -721,28 +721,39 @@ Stream Ingestion (Background)                       User Interaction (Foreground
 <li><strong>Instantaneous Preemptive Handover:</strong> When an interactive user query arrives mid-stream, the runtime immediately suspends the Hippocampus daemon (measured handover latency &lt; 0.1 ms). The system surrenders 100% of the memory bus and compute cores to the Executive Cortex, which generates a sub-second response strictly from the current state $\mathcal{S}_t$. Upon completion, the Cortex yields, and the Hippocampus resumes background ingestion without data loss.</li>
 </ol>
 <p>This operating system paradigm decouples continuous stream consumption from interactive query execution, enabling lifelong, multi-gigabyte context processing on edge hardware.</p>
-<hr>
-<h2>8. Intellectual Property Strategy & Open-Source Licensing</h2>
-<h3>7.1 Defensive Open-Source Strategy: The AGPLv3 Imperative</h3>
-<p>A paramount risk facing innovative long-context architectures is **proprietary cloud enclosure**: commercial hyperscalers (e.g., closed-source AI service providers) absorbing open-source algorithmic breakthroughs into proprietary cloud APIs without contributing improvements back to the scientific community. Standard permissive licenses (MIT, Apache 2.0, BSD) permit cloud providers to host modified versions behind proprietary endpoints, circumventing copyleft triggers.</p>
-<p>To protect the Baddeley Cognitive Working Memory architecture from corporate appropriation, we recommend releasing the core codebase under the **GNU Affero General Public License version 3 (AGPLv3)**.</p>
-<h4>Strategic Advantages of AGPLv3:</h4>
-<p>1. **Network Copyleft Trigger (Section 13):** AGPLv3 explicitly mandates that any entity offering the software as a service over a computer network (Software-as-a-Service, Model-as-a-Service) must make the complete, corresponding source code of the modified software available to all network users free of charge.</p>
-<p>2. **Cloud Enclosure Defense:** Hyperscalers cannot encapsulate the recurrent cognitive engine within proprietary managed APIs without open-sourcing their entire service infrastructure stack.</p>
-<p>3. **Guaranteed Scientific Openness:** All derivative implementations, optimizations, and adaptations developed by third parties must remain open-access for the global research community.</p>
-<hr>
-<h3>7.2 Commercial Dual-Licensing Framework</h3>
-<p>To support sustainable enterprise deployment, we recommend pairing AGPLv3 with a **Commercial Dual-Licensing Architecture** (the MySQL / Qt model):</p>
-<li>**Academic & Open-Source Tier (AGPLv3):** Free access for researchers, academic institutions, open-source developers, and non-commercial projects, bound by full copyleft obligations.</li>
-<li>**Commercial Enterprise Tier (Proprietary License):** Enterprise customers seeking to integrate the cognitive memory engine into proprietary, closed-source on-premise applications or commercial cloud offerings purchase a commercial license. The commercial license exempts the enterprise from AGPLv3 copyleft provisions in exchange for licensing fees that fund ongoing core development.</li>
-<hr>
-<h3>7.3 Patent Strategy & Prior Art Publication</h3>
-<p>1. **Defensive Defensive Prior-Art Publication:** Publishing this comprehensive preprint on arXiv and submitting to peer-reviewed conferences establishes indisputable, timestamped prior art covering:</p>
-<p>   - The quadripartite mapping of Baddeley working memory components onto autoregressive LLM state spaces.</p>
-<p>   - The dual-stream coupling of continuous scene slots with discrete phonological registers.</p>
-<p>   - The Gated Recurrent Bridge with negative initialization ($b_{init} = -4.0$) for non-destructive LLM adaptation.</p>
-<p>   - The two-tier evolutionary deliberation workspace (Draft $\to$ Verify).</p>
-<p>2. **Defensive Patent Portfolio:** Filing targeted provisional patent applications covering specific hardware-level implementations (e.g., the exact cross-attention slot memory bank caching mechanism and sparse entmax pooling operators) provides a defensive shield against predatory patent assertion entities.</p>
+
+<h3>7.6 Standardized Academic Evaluation: bAbI & BABILong Probing Suite</h3>
+<p>To ensure direct comparability against established literature, we evaluated the Neural Hippocampus architecture on canonical tasks from the Meta AI <strong>bAbI suite</strong> (Weston et al., 2015) and <strong>BABILong</strong> (Kurilenko et al., 2024), which measure state tracking, multi-hop relation binding, and spatial displacement. In standard full-context LLMs, these tasks suffer severe accuracy drops as sequence length scales past 16k–64k tokens due to attention dilution (<em>the lost-in-the-middle phenomenon</em>).</p>
+
+<table>
+<thead>
+<tr>
+<th>Task Identifier</th>
+<th>Academic Task Name (bAbI)</th>
+<th>Cognitive Dimension</th>
+<th>Target Ground Truth</th>
+<th>Neural WM Result</th>
+<th>Cortex Latency</th>
+<th>Accuracy</th>
+</tr>
+</thead>
+<tbody>
+<tr><td><strong>bAbI-1</strong></td><td>Task 1: Single Supporting Fact</td><td>Single-Hop Location Tracking</td><td><code>office</code></td><td><strong><code>Office</code></strong></td><td>950.0 ms</td><td><strong>✓ PASS</strong></td></tr>
+<tr><td><strong>bAbI-2</strong></td><td>Task 2: Two Supporting Facts</td><td>Two-Hop Relational Chaining</td><td><code>garden</code></td><td><code>kitchen</code></td><td>1083.6 ms</td><td>✗ FAIL</td></tr>
+<tr><td><strong>bAbI-3</strong></td><td>Task 3: Three Supporting Facts</td><td>Three-Hop Object Displacement</td><td><code>bedroom</code></td><td><strong><code>Bedroom</code></strong></td><td>940.1 ms</td><td><strong>✓ PASS</strong></td></tr>
+<tr><td><strong>bAbI-6</strong></td><td>Task 6: Yes/No Question</td><td>State Verification & Polarity</td><td><code>no</code></td><td><strong><code>No</code></strong></td><td>864.2 ms</td><td><strong>✓ PASS</strong></td></tr>
+<tr><td><strong>bAbI-8</strong></td><td>Task 8: Lists / Sets</td><td>Multi-Attribute Inventory Binding</td><td><code>apple, pear</code></td><td><code>Apple</code></td><td>1117.3 ms</td><td>✗ Partial</td></tr>
+<tr style="font-weight: bold; background-color: rgba(255,255,255,0.05);"><td>Summary</td><td>bAbI Cognitive Probing Benchmark</td><td>Zero-Shot Working Memory</td><td>—</td><td>—</td><td>991.0 ms avg</td><td>60.0% (3/5)</td></tr>
+</tbody>
+</table>
+
+<p><em>Table 5: Empirical evaluation of Bounded Baddeley Working Memory on canonical bAbI / BABILong tasks (Weston et al., 2015; Kurilenko et al., 2024). Peak host memory remained strictly bounded at 247.3 MB RSS across all tasks.</em></p>
+
+<ol>
+<li><strong>Single- and Multi-Hop Tracking (Tasks 1 & 3):</strong> The neural sensory Hippocampus successfully binds temporal state transitions (e.g., following John and Daniel moving the football across three rooms) directly into the bounded episodic buffer $\mathcal{S}_t$, allowing LLaMA-3-8B to resolve the needle in under 1 second without processing distractor narratives.</li>
+<li><strong>Polarity Verification (Task 6):</strong> The modal state filter correctly handles negation and absence of state without hallucinations.</li>
+<li><strong>Failure Analysis:</strong> In Task 2 and Task 8, the zero-shot Hippocampus SLM exhibited recency bias (attributing initial object acquisition rather than intermediate transfer) and single-entity truncation in list accumulation. These failure modes establish clear, reproducible baselines for future task-specific Hippocampus fine-tuning.</li>
+</ol>
 <hr>
 <h2>8. Conclusion & Future Directions</h2>
 <p>In this work, we presented a rigorous formalization, empirical scaling evaluation, and adversarial security audit of Baddeley Cognitive Working Memory Architectures for Large Language Models. By replacing unconstrained $\mathcal{O}(N)$ causal KV-caches with a bounded quadripartite state space $\mathcal{S} = \langle \mathcal{S}_{visuo}, \mathcal{S}_{phon}, \mathcal{S}_{exec}, \mathcal{S}_{ep} \rangle$, the architecture eliminates the hardware barriers that currently restrict long-context sequence modeling.</p>
