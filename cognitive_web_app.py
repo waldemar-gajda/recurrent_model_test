@@ -676,10 +676,13 @@ HTML_FRONTEND = """<!DOCTYPE html>
 
       <!-- Live Memory Assertions Preview -->
       <div class="space-y-2 pt-2 border-t border-slate-800">
-        <div class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-          Podgląd bufora roboczego O(1):
+        <div class="flex items-center justify-between text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
+          <span>Bufor roboczy O(1)</span>
+          <button onclick="copyAllFacts()" class="text-[10px] text-sky-400 hover:text-sky-300 font-sans normal-case transition cursor-pointer">
+            📋 Kopiuj fakty
+          </button>
         </div>
-        <div id="assertionsBox" class="max-h-36 overflow-y-auto space-y-1 text-[11px] font-mono text-slate-300">
+        <div id="assertionsBox" class="max-h-56 overflow-y-auto space-y-1 text-[11px] font-mono text-slate-300 select-text">
           <span class="text-slate-500 italic">Pamięć pusta...</span>
         </div>
       </div>
@@ -861,9 +864,9 @@ HTML_FRONTEND = """<!DOCTYPE html>
         const assertionsBox = document.getElementById('assertionsBox');
         if (data.memory.assertions.length > 0) {
           assertionsBox.innerHTML = data.memory.assertions.map(a => `
-            <div class="p-1 rounded bg-slate-950/40 border-l-2 border-l-sky-500">
-              <span class="text-[9px] text-sky-400 font-bold">[${a.source}]</span>
-              <span class="text-slate-300">${a.text}</span>
+            <div class="p-1.5 rounded bg-slate-950/60 border-l-2 border-l-sky-500 select-text cursor-text">
+              <div class="text-[9px] text-sky-400 font-bold">[${a.source}] ${a.timestamp}</div>
+              <div class="text-slate-200 select-text leading-snug mt-0.5">${escapeHtml(a.text)}</div>
             </div>
           `).reverse().join('');
         } else {
@@ -872,6 +875,22 @@ HTML_FRONTEND = """<!DOCTYPE html>
 
       } catch (e) {
         console.error(e);
+      }
+    }
+
+    async function copyAllFacts() {
+      try {
+        const res = await fetch('/api/state');
+        const data = await res.json();
+        if (!data.memory.assertions || data.memory.assertions.length === 0) {
+          alert('Brak faktów w pamięci do skopiowania.');
+          return;
+        }
+        const text = data.memory.assertions.map((a, i) => `${i + 1}. [${a.source}] ${a.text}`).join('\n\n');
+        await navigator.clipboard.writeText(text);
+        alert(`✓ Skopiowano ${data.memory.assertions.length} faktów do schowka!`);
+      } catch (e) {
+        alert('Zezwól przeglądarce na dostęp do schowka.');
       }
     }
 
