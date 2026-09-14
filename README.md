@@ -174,4 +174,4 @@ See Section 6 of the [Preprint Paper](paper.html) for full details.
 
 ### Dual-Licensing Strategy
 - **Open-Source / Academic Tier:** Licensed under the [GNU Affero General Public License v3 (AGPLv3)](LICENSE). Section 13 mandates that network-hosted modifications must open-source their full stack.
-- **Commercial Tier:** For proprietary enterprise integration without AGPLv3 copyleft, commercial licenses are available. Contact: `licensing@cognitive-working-memory.org`.
+- **Commercial Tier:** For proprietary enterprise integration without AGPLv3 copyleft, commercial licenses are available upon request to the author.

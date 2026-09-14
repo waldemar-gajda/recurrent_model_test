@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "baddeley-cognitive-memory"
 version = "0.1.0"
 authors = [
-  { name="Waldemar Gajda", email="contact@waldemargajda.com" },
+  { name="Waldemar Gajda" },
 ]
 description = "Bounded Recurrent Working Memory Architectures for Infinite Context Processing in LLMs (O(1) Memory)"
 readme = "README.md"
