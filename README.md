@@ -164,9 +164,9 @@ See Section 6 of the [Preprint Paper](paper.html) for full details.
 
 ### Academic Citation (BibTeX)
 ```bibtex
-@article{baddeley_cognitive_memory2026,
+@article{gajda2026baddeley,
   title={Bounded Recurrent Cognitive State Spaces for Infinite Context Processing in Large Language Models: An Empirical, Formal, and Adversarial Analysis of Baddeley Working Memory Architectures},
-  author={Cognitive Working Memory Research Consortium},
+  author={Gajda, Waldemar},
   journal={arXiv preprint arXiv:2609.xxxxx},
   year={2026}
 }

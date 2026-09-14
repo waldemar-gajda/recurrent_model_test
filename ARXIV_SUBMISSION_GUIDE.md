@@ -11,9 +11,9 @@ This guide provides everything needed to submit the paper to **arXiv** and claim
 Bounded Recurrent Cognitive State Spaces for Infinite Context Processing in Large Language Models: An Empirical, Formal, and Adversarial Analysis of Baddeley Working Memory Architectures
 ```
 
-### Authors
+### Author & Affiliation
 ```text
-Cognitive Working Memory Research Consortium (or specify your name/co-authors)
+Waldemar Gajda (Independent Researcher)
 ```
 
 ### Primary Subject Classification

@@ -70,4 +70,4 @@ The complete codebase and academic preprint are live and open-source under AGPLv
 📄 Paper (HTML & LaTeX): [Link]
 ⚡ 1-Line Benchmark: `python3 run_reproducible_benchmarks.py`
 
-Built by the Cognitive Working Memory Consortium. RT to spread the word! 🔁
+Built by Waldemar Gajda. RT to spread the word! 🔁

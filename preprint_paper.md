@@ -1,7 +1,7 @@
 # Bounded Recurrent Cognitive State Spaces for Infinite Context Processing in Large Language Models: An Empirical, Formal, and Adversarial Analysis of Baddeley Working Memory Architectures
 
-**Authors:** Cognitive Working Memory Research Consortium  
-**Affiliation:** Autonomous Cognitive Systems & Neural Architectures Laboratory  
+**Author:** Waldemar Gajda  
+**Affiliation:** Independent Researcher  
 **Date:** September 2026  
 **Document Classification:** Academic Preprint / arXiv-Ready Technical Report  
 **Target Tracks:** NeurIPS / ICLR / ACL / JMLR (Machine Learning & Cognitive Architectures)  
