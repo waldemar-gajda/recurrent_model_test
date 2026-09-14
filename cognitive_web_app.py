@@ -315,8 +315,8 @@ class DualCognitiveEngine:
 
                             for line in response.splitlines():
                                 l = line.strip()
-                                if l.startswith("-") or l.startswith("•") or (len(l) > 3 and l[0].isdigit() and l[1] in [".", ")"]):
-                                    clean_fact = re.sub(r"^[-•\d.)\s]+", "", l).strip()
+                                if l.startswith("-") or l.startswith("•") or l.startswith("*") or (len(l) > 2 and re.match(r"^\d+[\.\)\:]", l)):
+                                    clean_fact = re.sub(r"^([-•*]|\d+[\.\)\:])\s*", "", l).strip()
                                     if len(clean_fact) > 15 and clean_fact not in extracted_facts:
                                         extracted_facts.append(clean_fact)
                 except Exception as e:
