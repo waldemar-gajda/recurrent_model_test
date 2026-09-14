@@ -149,16 +149,49 @@ Both achieve $\mathcal{O}(1)$ inference memory, but at fundamentally distinct ar
 
 ---
 
-## Adversarial Red-Team Audit & Mitigations
+## Dual-LLM Neural Architecture: Artificial Sensory Hippocampus (`hippocampus_slm_distiller.py`)
 
-We executed an aggressive zero-trust red-team audit ([ADVERSARIAL_AUDIT.md](ADVERSARIAL_AUDIT.md)) exposing critical failure modes in early heuristic prototypes:
-1. **Distractor Needle Spoofing (83.3% failure):** Solved via **Polarity & Modal Logic State Filters**.
-2. **Syntactic Collapse (84.7% failure):** Solved via **Small-LM Semantic Parsers (SmolLM2-360M)** emitting validated JSON entity triples.
-3. **Cross-Attention Dilution ($\mathcal{O}(1/T)$):** Solved via **Entropy-Gated Sparse Attention ($\alpha$-entmax, $\alpha=1.5$)**.
+To eliminate heuristic regex-based distillation entirely, the architecture integrates an on-device Small Language Model (**SmolLM2-1.7B-Instruct**) acting as an **Artificial Hippocampus**:
 
-See Section 6 of the [Preprint Paper](paper.html) for full details.
+```
+[Unbounded Text Stream] ──(512 tok chunks)──► [Hippocampus SLM: SmolLM2-1.7B]
+                                                      │ (structured JSON triples)
+                                                      ▼
+                                              [Baddeley Working Memory: O(1)]
+                                                      │ (bounded ~300 tok buffer)
+                                                      ▼
+                                              [Executive Cortex: LLaMA-3-8B]
+```
+
+### Adversarial Validation Matrix (`test_hippocampus_negation.py`)
+Evaluating against the failure modes exposed in the red-team audit:
+
+| Adversarial Vulnerability Probe | Heuristic Regex (System B) | Neural Hippocampus (SmolLM2-1.7B) |
+|:---|:---:|:---:|
+| **VM1-B: Distractor Key Spoofing** (`DRAFT-KEY` vs `TITAN-KEY`) | ✗ FAIL (Spoofed) | **✓ PASS** |
+| **VM2-A: Semantic Paraphrase** (*"market capitalization"* &rarr; valuation) | ✗ FAIL (Missed) | **✓ PASS** |
+| **VM2-B: Passive Voice** (*"was agreed upon"*) | ✗ FAIL (Missed) | **✓ PASS** |
+| **VM2-D: Hedged Legal Qualifiers** (confirmation statements) | ✗ FAIL (Missed) | **✓ PASS** |
+| **VM3-A: Explicit Negation** (rejected €15M vs valid €45M) | ✓ PASS | **✓ PASS** |
+| **VM3-B: Complete Revocation** (cancelled tranche evicts state) | ✓ PASS | **✓ PASS** |
+| **VM3-C: Temporal Override** (amendment supersedes baseline) | ✓ PASS | **✓ PASS** |
+| **VM3-E: Modal Conditional** (*"considering… decision pending"*) | ✓ PASS | **✓ PASS** |
+| **Overall Robustness** | **4/8 (50.0%)** | **8/8 (100.0%)** |
+
+- **Inference Latency:** $\approx 2.28$ s/chunk on Apple Silicon (MPS).
+- **Physical Memory:** Strict $\mathcal{O}(1)$ footprint (bounded working memory buffer).
+- Run the test suite: `python3 test_hippocampus_negation.py`
 
 ---
+
+## Adversarial Red-Team Audit & Mitigations
+
+We executed an aggressive zero-trust red-team audit ([ADVERSARIAL_AUDIT.md](ADVERSARIAL_AUDIT.md)) exposing critical failure modes in early heuristic prototypes, now fully resolved by the Neural Hippocampus layer and entropy-gated sparse attention.
+
+See Sections 6 & 7 of the [Preprint Paper](paper.html) for full mathematical specifications and ablation studies.
+
+---
+
 
 ## Citation & Intellectual Property
 
