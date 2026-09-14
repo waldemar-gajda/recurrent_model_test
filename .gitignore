@@ -1,0 +1,33 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Pytest / Caches
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local Model Weights & Checkpoints (Large Binaries > 100MB)
+*.pt
+*.bin
+*.safetensors
+llama-3-8b-instruct/
+smollm2-135m-instruct/
+
+# Environments & OS
+.agents/
+.venv/
+venv/
+ENV/
+.DS_Store
+*.swp
+
+# LaTeX compilation artifacts
+*.aux
+*.log
+*.out
+*.toc
+*.bbl
+*.blg
+*.synctex.gz
