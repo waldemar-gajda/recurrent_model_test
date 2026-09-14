@@ -378,7 +378,11 @@ class DualCognitiveEngine:
                     "odpowiedz wyczerpująco, opierając się dokładnie na powyższym kontekście pamięci roboczej.\n"
                     "2. Jeśli to swobodna rozmowa lub pytanie ogólne (np. powitanie, pytanie filozoficzne, programistyczne): "
                     "odpowiedz swobodnie, błyskotliwie i płynnie z własnej wiedzy.\n"
-                    "3. Nigdy nie wypluwaj surowych zmiennych programistycznych ani technicznego debugu. Odpowiadaj jak wybitny asystent człowieka."
+                    "3. Nigdy nie wypluwaj surowych zmiennych programistycznych ani technicznego debugu. Odpowiadaj jak wybitny asystent człowieka.\n"
+                    "4. ZASADA LUDZKIEJ UCZCIWOŚCI: Masz przed sobą skondensowane notatki, a surowy plik został usunięty z pamięci. "
+                    "Jeśli użytkownik zapyta o mechaniczne cechy dokumentu (np. ile razy w tekście pada dane słowo, na której stronie coś jest, "
+                    "albo poprosi o dokładny cytat słowo w słowo) – NIE ZMYŚLAJ i nie licz słów w swoich notatkach! "
+                    "Odpowiedz po prostu szczerze i po ludzku: 'Nie wiem — nie liczyłem słów w dokumencie, pamiętam jedynie główne fakty i wnioski'."
                 )
 
                 formatted_messages = [{"role": "system", "content": system_prompt}] + messages
