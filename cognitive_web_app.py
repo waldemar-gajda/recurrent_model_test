@@ -1,20 +1,22 @@
 #!/usr/bin/env python3
 """
-cognitive_web_app.py - Standalone Baddeley Cognitive Working Memory Assistant
-
+cognitive_web_app.py — Baddeley Cognitive Working Memory Assistant & Agent
+========================================================================
+A modern, intuitive AI assistant powered by Baddeley Cognitive Working Memory.
 Features:
-- 4-Buffer Baddeley Working Memory: Visuospatial Sketchpad, Phonological Loop,
-  Central Executive, Episodic Buffer.
-- Preemptive Memory Bus: queries preempt background hippocampus ingestion.
-- Model Manager: hot-swap & detection for SmolLM2-135M, SmolLM2-1.7B, LLaMA-3-8B.
-- Background Clipboard Monitor via pyperclip (opt-in toggle).
-- Real-time WebSocket cockpit HUD (glassmorphic dark UI).
-- Headless test suite via `python3 cognitive_web_app.py --test`.
+- Natural Conversational Agent (real neural generation with streaming tokens).
+- Working Memory Context Injection (remembers uploaded files, notes, clipboard).
+- Drag-and-Drop File Upload (PDF, TXT, MD, JSON, Python, CSV, Log).
+- Passive macOS Clipboard Monitor (opt-in toggle).
+- Clean, clutter-free modern interface (ChatGPT / Claude style).
+- Model switching (SmolLM2-1.7B for fast responses, LLaMA-3-8B for frontier reasoning).
+- Headless verification: `python3 cognitive_web_app.py --test`.
 """
 
 import argparse
 import asyncio
 import collections
+import contextlib
 import dataclasses
 import datetime
 import json
@@ -24,9 +26,9 @@ import sys
 import threading
 import time
 import webbrowser
-import contextlib
-from typing import Any, Dict, List, Optional
+from io import BytesIO
 from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 try:
     import psutil
@@ -38,351 +40,338 @@ try:
 except ImportError:
     pyperclip = None
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+try:
+    import pypdf
+except ImportError:
+    pypdf = None
+
+import torch
+from fastapi import FastAPI, File, Form, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
+from transformers import AutoModelForCausalLM, AutoTokenizer, TextIteratorStreamer
 import uvicorn
 
 
 # =====================================================================
-# 1. Baddeley Working Memory Data Structures
+# 1. Cognitive Working Memory Engine (O(1) Bounded State)
 # =====================================================================
 
 @dataclasses.dataclass
-class PhonologicalItem:
-    token: str
-    added_at: float
-    rehearsals: int = 1
-
-
-@dataclasses.dataclass
-class VisuospatialSlot:
-    slot_id: str
-    entity: str
-    spatial_relation: str
-    weight: float
-
-
-@dataclasses.dataclass
-class EpisodicEpisode:
-    episode_id: str
-    timestamp: str
+class WorkingMemoryFact:
+    fact_id: str
     source: str
-    summary: str
-    multimodal_binding: Dict[str, Any]
+    text: str
+    timestamp: str
 
 
-class BaddeleyWorkingMemory:
-    """Implementation of Baddeley quadripartite cognitive working memory architecture."""
-    def __init__(self, capacity: int = 7):
-        self.capacity = capacity
+class CognitiveWorkingMemory:
+    """Maintains an entity-scoped, bounded working memory of active context."""
+
+    def __init__(self, max_facts: int = 50):
+        self.max_facts = max_facts
         self.lock = asyncio.Lock()
+        self.facts: collections.deque[WorkingMemoryFact] = collections.deque(maxlen=max_facts)
+        self.uploaded_sources: List[Dict[str, Any]] = []
+        self.total_tokens_ingested: int = 0
 
-        # 1. Central Executive
-        self.focus: str = "Oczekiwanie na bodzce sensoryczne"
-        self.attention_budget: float = 1.0
-        self.goals: List[str] = ["Monitorowanie kontekstu", "Integracja epizodyczna"]
-        self.preemption_count: int = 0
-        self.is_preempted: bool = False
+    async def ingest(self, text: str, source: str = "tekst"):
+        """Ingest and distill incoming context."""
+        cleaned = text.strip()
+        if not cleaned:
+            return
 
-        # 2. Phonological Loop (articulatory store & rehearsal)
-        self.phonological_store: collections.deque = collections.deque(maxlen=14)
-
-        # 3. Visuospatial Sketchpad (spatial visual slots)
-        self.visuospatial_slots: List[VisuospatialSlot] = []
-
-        # 4. Episodic Buffer (chronological multimodal binding)
-        self.episodic_buffer: collections.deque = collections.deque(maxlen=capacity)
-
-    async def rehearse_phonological(self):
-        """Simulates articulatory rehearsal loop; decays non-rehearsed verbal traces."""
         async with self.lock:
-            now = time.time()
-            active = []
-            for item in self.phonological_store:
-                if now - item.added_at < 12.0:
-                    item.rehearsals += 1
-                    active.append(item)
-            self.phonological_store = collections.deque(active, maxlen=14)
+            # Approximate token count
+            approx_tokens = len(cleaned.split())
+            self.total_tokens_ingested += approx_tokens
 
-    async def ingest_chunk(self, text: str, source: str = "direct"):
-        """Ingests a sensory piece into Baddeley buffers."""
-        async with self.lock:
-            cleaned = text.strip()
-            if not cleaned:
-                return
+            # Extract distinct factual sentences
+            sentences = [s.strip() for s in re.split(r"[.\n;]+", cleaned) if len(s.strip()) > 15]
+            if not sentences:
+                sentences = [cleaned[:160]]
 
-            # Phonological loop ingest (tokenize verbal representation)
-            tokens = re.findall(r"\b[\w\-]{2,}\b", cleaned)
-            now = time.time()
-            for t in tokens[:6]:
-                self.phonological_store.append(PhonologicalItem(token=t.lower(), added_at=now))
-
-            # Visuospatial Sketchpad parsing (spatial/visual/system keywords)
-            spatial_matches = re.findall(
-                r"(lewo|prawo|gora|dol|przod|tyl|slot|baza|ram|gpu|okno|ekran|hud|buffer|port|host|valuation|contract|key)",
-                cleaned.lower()
-            )
-            if spatial_matches:
-                slot_name = f"VS-{len(self.visuospatial_slots) + 1}"
-                relation = spatial_matches[0]
-                entity = cleaned[:35] + ("..." if len(cleaned) > 35 else "")
-                self.visuospatial_slots.append(
-                    VisuospatialSlot(slot_id=slot_name, entity=entity, spatial_relation=relation, weight=0.85)
+            now_str = datetime.datetime.now().strftime("%H:%M:%S")
+            for sent in sentences[:10]:
+                fact = WorkingMemoryFact(
+                    fact_id=f"F-{int(time.time() * 1000) % 100000}",
+                    source=source,
+                    text=sent[:240],
+                    timestamp=now_str,
                 )
-                if len(self.visuospatial_slots) > 8:
-                    self.visuospatial_slots.pop(0)
+                self.facts.append(fact)
 
-            # Episodic Buffer binding
-            iso_now = datetime.datetime.now().strftime("%H:%M:%S")
-            summary = cleaned[:70] + ("..." if len(cleaned) > 70 else "")
-            episode = EpisodicEpisode(
-                episode_id=f"EP-{int(time.time() * 1000) % 100000}",
-                timestamp=iso_now,
-                source=source,
-                summary=summary,
-                multimodal_binding={
-                    "phonological_tokens": len(tokens),
-                    "spatial_cues": len(spatial_matches),
-                    "central_priority": "normal"
-                }
-            )
-            self.episodic_buffer.append(episode)
+    async def add_source_record(self, name: str, char_count: int, source_type: str):
+        async with self.lock:
+            self.uploaded_sources.append({
+                "name": name,
+                "chars": char_count,
+                "type": source_type,
+                "time": datetime.datetime.now().strftime("%H:%M:%S")
+            })
 
-            # Central Executive updates
-            self.focus = f"Skupienie: {summary[:40]}"
-            self.attention_budget = max(0.2, 1.0 - (len(self.episodic_buffer) / self.capacity) * 0.4)
+    async def get_context_for_prompt(self, max_chars: int = 2500) -> str:
+        """Returns summarized working memory string for neural prompt injection."""
+        async with self.lock:
+            if not self.facts:
+                return ""
+            lines = [f"• [{f.source}] {f.text}" for f in list(self.facts)[-15:]]
+            result = "\n".join(lines)
+            return result[:max_chars]
 
     async def snapshot(self) -> Dict[str, Any]:
-        """Returns serializable snapshot of working memory state."""
         async with self.lock:
             return {
-                "central_executive": {
-                    "focus": self.focus,
-                    "attention_budget": round(self.attention_budget, 2),
-                    "goals": list(self.goals),
-                    "preemption_count": self.preemption_count,
-                    "is_preempted": self.is_preempted,
-                },
-                "phonological_loop": [
-                    {"token": item.token, "rehearsals": item.rehearsals}
-                    for item in list(self.phonological_store)
-                ],
-                "visuospatial_sketchpad": [
-                    dataclasses.asdict(slot) for slot in self.visuospatial_slots
-                ],
-                "episodic_buffer": [
-                    dataclasses.asdict(ep) for ep in list(self.episodic_buffer)
-                ]
+                "fact_count": len(self.facts),
+                "facts": [dataclasses.asdict(f) for f in list(self.facts)[-20:]],
+                "sources": list(self.uploaded_sources),
+                "total_tokens": self.total_tokens_ingested,
             }
 
     async def clear(self):
-        """Resets working memory."""
         async with self.lock:
-            self.focus = "Oczekiwanie na bodzce sensoryczne"
-            self.attention_budget = 1.0
-            self.phonological_store.clear()
-            self.visuospatial_slots.clear()
-            self.episodic_buffer.clear()
+            self.facts.clear()
+            self.uploaded_sources.clear()
 
 
 # =====================================================================
-# 2. Model Manager (Hot-swap, HF cache detection, Inference)
+# 2. Neural Model Manager (Real Autoregressive LLM Inference)
 # =====================================================================
 
-class ModelManager:
-    AVAILABLE_MODELS = {
-        "SmolLM2-135M": {"hf_id": "HuggingFaceTB/SmolLM2-135M-Instruct", "ram": "257 MB", "tier": "Instant Lite"},
-        "SmolLM2-1.7B": {"hf_id": "HuggingFaceTB/SmolLM2-1.7B-Instruct", "ram": "3.4 GB", "tier": "Mid-Weight"},
-        "LLaMA-3-8B": {"hf_id": "NousResearch/Meta-Llama-3-8B-Instruct", "ram": "16.0 GB", "tier": "Heavy Frontier"},
+class NeuralModelManager:
+    """Manages weights, caching, and token generation on Apple Silicon MPS / CPU."""
+
+    MODELS_CONFIG = {
+        "SmolLM2-1.7B": {
+            "path": "HuggingFaceTB/SmolLM2-1.7B-Instruct",
+            "desc": "Zrównoważony i szybki (rekomendowany)",
+            "ram": "~3.4 GB",
+        },
+        "LLaMA-3-8B": {
+            "path": "./llama-3-8b-instruct",
+            "fallback_path": "NousResearch/Meta-Llama-3-8B-Instruct",
+            "desc": "Zaawansowane rozumowanie (najwyższa jakość)",
+            "ram": "~16 GB",
+        },
+        "SmolLM2-135M": {
+            "path": "./smollm2-135m-instruct",
+            "fallback_path": "HuggingFaceTB/SmolLM2-135M-Instruct",
+            "desc": "Ultralekki model kieszonkowy",
+            "ram": "~250 MB",
+        },
     }
 
     def __init__(self):
-        self.current_model_name = "SmolLM2-135M"
-        self.status = "Ready"
-        self.cached_models: List[str] = ["SmolLM2-135M"]
-        self._detect_hf_cache()
+        self.device = "mps" if torch.backends.mps.is_available() else "cpu"
+        self.current_model_name = "SmolLM2-1.7B"
+        self.model = None
+        self.tokenizer = None
+        self.is_loading = False
+        self.load_status = "Inicjalizacja..."
+        self._lock = threading.Lock()
 
-    def _detect_hf_cache(self):
-        # 1. Sprawdź lokalne katalogi projektu
-        base_dir = Path(__file__).parent
-        local_checks = {
-            "SmolLM2-135M": base_dir / "smollm2-135m-instruct",
-            "LLaMA-3-8B": base_dir / "llama-3-8b-instruct",
-        }
-        for name, p in local_checks.items():
-            if p.exists() and any(p.glob("*.safetensors")):
-                if name not in self.cached_models:
-                    self.cached_models.append(name)
+    def get_model_options(self) -> List[Dict[str, Any]]:
+        return [
+            {
+                "id": k,
+                "desc": v["desc"],
+                "ram": v["ram"],
+                "active": k == self.current_model_name
+            }
+            for k, v in self.MODELS_CONFIG.items()
+        ]
 
-        # 2. Sprawdź centralny cache Hugging Face (~/.cache/huggingface/hub)
-        cache_dir = os.path.expanduser("~/.cache/huggingface/hub")
-        if os.path.exists(cache_dir):
+    def load_model(self, model_name: str):
+        """Loads or hot-swaps model into memory."""
+        with self._lock:
+            if self.model is not None and self.current_model_name == model_name:
+                return
+
+            self.is_loading = True
+            self.load_status = f"Ładowanie modelu {model_name}..."
             try:
-                for name, meta in self.AVAILABLE_MODELS.items():
-                    hub_folder = "models--" + meta["hf_id"].replace("/", "--")
-                    hub_path = os.path.join(cache_dir, hub_folder)
-                    if os.path.exists(hub_path):
-                        if name not in self.cached_models:
-                            self.cached_models.append(name)
-            except Exception:
-                pass
+                # Free previous model memory
+                if self.model is not None:
+                    del self.model
+                    del self.tokenizer
+                    self.model = None
+                    self.tokenizer = None
+                    if self.device == "mps":
+                        torch.mps.empty_cache()
 
-    def switch_model(self, model_name: str) -> Dict[str, Any]:
-        if model_name not in self.AVAILABLE_MODELS:
-            return {"ok": False, "error": "Model nieznany"}
-        self.current_model_name = model_name
-        self.status = f"Loaded ({model_name})"
-        if model_name not in self.cached_models:
-            self.cached_models.append(model_name)
-        return {"ok": True, "current": self.current_model_name, "meta": self.AVAILABLE_MODELS[model_name]}
+                cfg = self.MODELS_CONFIG.get(model_name, self.MODELS_CONFIG["SmolLM2-1.7B"])
+                path = cfg["path"]
 
-    def generate_response(self, user_query: str, wm_state: Dict[str, Any]) -> str:
-        """Generates response synthesized with Baddeley working memory state."""
-        focus = wm_state["central_executive"]["focus"]
-        episodes = wm_state["episodic_buffer"]
-        vs_slots = wm_state["visuospatial_sketchpad"]
-        phon_tokens = [p["token"] for p in wm_state["phonological_loop"][-6:]]
+                # Check if local directory exists, else fallback to HF Hub
+                if not Path(path).exists() and "fallback_path" in cfg:
+                    path = cfg["fallback_path"]
 
-        ep_context = " ; ".join([e["summary"] for e in episodes[-3:]]) if episodes else "Brak wpisów"
-        spatial_context = ", ".join([f"{s['slot_id']} ({s['spatial_relation']})" for s in vs_slots[-3:]]) if vs_slots else "Pusty"
+                print(f"  [Neural Engine] Loading {model_name} from '{path}' on {self.device}...")
+                tok = AutoTokenizer.from_pretrained(path)
+                if tok.pad_token is None:
+                    tok.pad_token = tok.eos_token
 
-        response = (
-            f"[Cortex Exec — {self.current_model_name}]: Odpowiedź na zapytanie: '{user_query}'\n\n"
-            f"🧠 Stan pamięci roboczej Baddeleya (O(1)):\n"
-            f"  • Centralny Zarządca (Focus): {focus}\n"
-            f"  • Bufor Epizodyczny (Ostatnie ślady): {ep_context}\n"
-            f"  • Szkicownik Wzrokowo-Przestrzenny: {spatial_context}\n"
-            f"  • Pętla Fonologiczna (Aktywne tokeny): {', '.join(phon_tokens) if phon_tokens else 'Brak'}\n\n"
-            f"Wnioskowanie kognitywne: Informacja została zintegrowana w bieżącym oknie uwagi. Szyna sensoryczna wznowiła nasłuch."
+                # Use bfloat16 for 1.7B and 8B on MPS
+                dtype = torch.bfloat16 if self.device == "mps" and "135M" not in model_name else torch.float32
+                model = AutoModelForCausalLM.from_pretrained(
+                    path,
+                    dtype=dtype,
+                    low_cpu_mem_usage=True,
+                ).to(self.device)
+                model.eval()
+
+                self.tokenizer = tok
+                self.model = model
+                self.current_model_name = model_name
+                self.load_status = f"Gotowy ({model_name} na {self.device.upper()})"
+                print(f"  [Neural Engine] ✓ {model_name} loaded successfully.")
+            except Exception as e:
+                self.load_status = f"Błąd ładowania: {e}"
+                print(f"  [Neural Engine] ✗ Failed to load {model_name}: {e}")
+            finally:
+                self.is_loading = False
+
+    def generate_streaming(
+        self,
+        messages: List[Dict[str, str]],
+        working_memory_context: str = "",
+        max_tokens: int = 512,
+        temperature: float = 0.7,
+    ):
+        if self.model is None or self.tokenizer is None:
+            wait_count = 0
+            while self.is_loading and wait_count < 30:
+                time.sleep(0.5)
+                wait_count += 1
+            if self.model is None or self.tokenizer is None:
+                self.load_model(self.current_model_name)
+
+        if self.model is None or self.tokenizer is None:
+            yield "Przepraszam, model nie mógł zostać załadowany. Sprawdź logi serwera."
+            return
+
+        # Prepare system prompt with working memory
+        system_instruction = (
+            "Jesteś pomocnym, inteligentnym asystentem AI wyposażonym w pamięć roboczą (Working Memory).\n"
+            "Odpowiadaj naturalnie, wyczerpująco i uprzejmie w języku użytkownika (domyślnie po polsku).\n"
         )
-        return response
+        if working_memory_context:
+            system_instruction += (
+                "\n--- PAMIĘĆ ROBOCZA (FAKTY Z WGRANYCH DOKUMENTÓW, SCHOWKA I ROZMOWY) ---\n"
+                f"{working_memory_context}\n"
+                "------------------------------------------------------------------------\n"
+                "Instrukcja: Jeśli pytanie użytkownika dotyczy powyższego kontekstu lub dokumentów, "
+                "wykorzystaj te informacje, aby precyzyjnie i zgodnie z faktami odpowiedzieć na pytanie. "
+                "Jeśli to zwykła rozmowa lub pytanie ogólne, odpowiedz płynnie z własnej wiedzy."
+            )
+
+        full_messages = [{"role": "system", "content": system_instruction}] + messages
+
+        try:
+            prompt = self.tokenizer.apply_chat_template(
+                full_messages,
+                tokenize=False,
+                add_generation_prompt=True
+            )
+        except Exception:
+            # Fallback for models with non-standard chat templates
+            prompt = f"{system_instruction}\n\nUser: {messages[-1]['content']}\nAssistant:"
+
+        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
+        streamer = TextIteratorStreamer(self.tokenizer, skip_prompt=True, skip_special_tokens=True)
+
+        kwargs = dict(
+            **inputs,
+            streamer=streamer,
+            max_new_tokens=max_tokens,
+            do_sample=(temperature > 0.1),
+            temperature=max(temperature, 0.2),
+            pad_token_id=self.tokenizer.pad_token_id,
+        )
+
+        gen_thread = threading.Thread(target=self.model.generate, kwargs=kwargs)
+        gen_thread.start()
+
+        for chunk in streamer:
+            yield chunk
+
+        gen_thread.join()
 
 
 # =====================================================================
-# 3. Async Cognitive Runtime & Background Sensory Bus
+# 3. Application State & Continuous Ingestion Watchers
 # =====================================================================
 
-class AsyncCognitiveRuntime:
+class AssistantApplication:
     def __init__(self):
-        self.wm = BaddeleyWorkingMemory(capacity=7)
-        self.model_mgr = ModelManager()
-        self.ingestion_queue: asyncio.Queue = asyncio.Queue()
-        self.is_running = True
+        self.wm = CognitiveWorkingMemory()
+        self.model_mgr = NeuralModelManager()
+        self.chat_history: List[Dict[str, str]] = []
         self.clipboard_monitor_active = False
         self.clipboard_thread: Optional[threading.Thread] = None
         self.last_clipboard_text = ""
-        self.recent_feed: collections.deque = collections.deque(maxlen=25)
-        self.total_tokens_ingested = 0
         self.start_time = time.time()
+        self.is_running = True
 
-    async def start(self):
-        asyncio.create_task(self._hippocampus_ingestion_loop())
-        asyncio.create_task(self._phonological_rehearsal_loop())
+    def start(self):
+        # Asynchronously load default model SmolLM2-1.7B
+        threading.Thread(target=self.model_mgr.load_model, args=("SmolLM2-1.7B",), daemon=True).start()
 
-    async def _hippocampus_ingestion_loop(self):
-        """Background sensory ingestion pipeline."""
-        while self.is_running:
-            chunk, source = await self.ingestion_queue.get()
-            # If preemption active, yield execution instantly to user cortex queries
-            while self.wm.is_preempted:
-                await asyncio.sleep(0.05)
-
-            await self.wm.ingest_chunk(chunk, source=source)
-            self.total_tokens_ingested += len(chunk.split())
-            self.recent_feed.append({
-                "time": datetime.datetime.now().strftime("%H:%M:%S"),
-                "source": source,
-                "text": chunk[:100]
-            })
-            self.ingestion_queue.task_done()
-            await asyncio.sleep(0.05)
-
-    async def _phonological_rehearsal_loop(self):
-        """Periodically rehearses active verbal traces to maintain retention."""
-        while self.is_running:
-            await self.wm.rehearse_phonological()
-            await asyncio.sleep(2.0)
-
-    async def preempt_and_query(self, query_text: str) -> Dict[str, Any]:
-        """Preempts background ingestion bus, queries Cortex, releases bus."""
-        t0 = time.time()
-        self.wm.is_preempted = True
-        self.wm.preemption_count += 1
-        try:
-            # Grab state snapshot
-            state = await self.wm.snapshot()
-            # Synthesize answer via ModelManager
-            answer = self.model_mgr.generate_response(query_text, state)
-            # Ingest query and answer into episodic trace
-            await self.wm.ingest_chunk(f"User Cortex Query: {query_text}", source="cortex_query")
-            latency_ms = round((time.time() - t0) * 1000, 2)
-            return {
-                "answer": answer,
-                "latency_ms": latency_ms,
-                "preemption_occurred": True,
-                "model": self.model_mgr.current_model_name
-            }
-        finally:
-            self.wm.is_preempted = False
-
-    def toggle_clipboard_monitor(self, active: bool) -> bool:
+    def toggle_clipboard(self, active: bool) -> bool:
         if pyperclip is None:
             self.clipboard_monitor_active = False
             return False
         self.clipboard_monitor_active = active
         if active and (self.clipboard_thread is None or not self.clipboard_thread.is_alive()):
-            self.clipboard_thread = threading.Thread(target=self._clipboard_watcher_worker, daemon=True)
+            self.clipboard_thread = threading.Thread(target=self._clipboard_worker, daemon=True)
             self.clipboard_thread.start()
         return self.clipboard_monitor_active
 
-    def _clipboard_watcher_worker(self):
-        """Monitors system pasteboard for new text."""
+    def _clipboard_worker(self):
         while self.clipboard_monitor_active and self.is_running:
             try:
                 current = pyperclip.paste()
-                if current and current != self.last_clipboard_text and len(current.strip()) > 3:
+                if current and current != self.last_clipboard_text and len(current.strip()) > 5:
                     self.last_clipboard_text = current
-                    # Ingest via async queue safely from thread
-                    self.ingestion_queue.put_nowait((current, "clipboard"))
+                    asyncio.run(self.wm.ingest(current, source="schowek"))
+                    asyncio.run(self.wm.add_source_record("Schowek systemowy", len(current), "clipboard"))
             except Exception:
                 pass
             time.sleep(1.0)
 
-    def get_system_telemetry(self) -> Dict[str, Any]:
-        ram_rss_mb = 0.0
+    def get_telemetry(self) -> Dict[str, Any]:
+        rss_mb = 0.0
         if psutil:
             try:
                 proc = psutil.Process(os.getpid())
-                ram_rss_mb = round(proc.memory_info().rss / (1024 * 1024), 1)
+                rss_mb = round(proc.memory_info().rss / (1024 * 1024), 1)
             except Exception:
-                ram_rss_mb = 128.0
-        uptime = max(1.0, time.time() - self.start_time)
-        throughput = round(self.total_tokens_ingested / uptime, 1)
+                rss_mb = 120.0
         return {
-            "ram_rss_mb": ram_rss_mb,
-            "throughput_tps": throughput,
+            "ram_rss_mb": rss_mb,
             "clipboard_active": self.clipboard_monitor_active,
-            "model": self.model_mgr.current_model_name,
-            "models_available": list(self.model_mgr.AVAILABLE_MODELS.keys()),
-            "queue_size": self.ingestion_queue.qsize()
+            "current_model": self.model_mgr.current_model_name,
+            "model_status": self.model_mgr.load_status,
+            "is_loading": self.model_mgr.is_loading,
+            "device": self.model_mgr.device.upper(),
         }
 
 
-# =====================================================================
-# 4. FastAPI Web Server & Single Page Application (Cockpit HUD)
-# =====================================================================
+assistant = AssistantApplication()
 
-runtime = AsyncCognitiveRuntime()
+
+# =====================================================================
+# 4. FastAPI Routes & Endpoints
+# =====================================================================
 
 @contextlib.asynccontextmanager
 async def lifespan(app_instance: FastAPI):
-    await runtime.start()
+    assistant.start()
     yield
-    runtime.is_running = False
+    assistant.is_running = False
 
-app = FastAPI(title="Baddeley Cognitive HUD", lifespan=lifespan)
+app = FastAPI(title="Cognitive Assistant", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -393,106 +382,174 @@ app.add_middleware(
 )
 
 
-class IngestRequest(BaseModel):
+class TextIngestRequest(BaseModel):
     text: str
-    source: Optional[str] = "web_hud"
+    source_name: Optional[str] = "Wklejony tekst"
 
 
-class QueryRequest(BaseModel):
-    query: str
-
-
-class ModelSelectRequest(BaseModel):
+class SwitchModelRequest(BaseModel):
     model_name: str
 
 
-class ClipboardToggleRequest(BaseModel):
+class ClipboardRequest(BaseModel):
     active: bool
 
 
 @app.get("/api/state")
 async def api_get_state():
-    state = await runtime.wm.snapshot()
-    telemetry = runtime.get_system_telemetry()
-    return {"state": state, "telemetry": telemetry, "recent_feed": list(runtime.recent_feed)}
+    snap = await assistant.wm.snapshot()
+    telemetry = assistant.get_telemetry()
+    models = assistant.model_mgr.get_model_options()
+    return {
+        "memory": snap,
+        "telemetry": telemetry,
+        "models": models,
+        "chat_count": len(assistant.chat_history),
+    }
 
 
-@app.post("/api/ingest")
-async def api_ingest(req: IngestRequest):
+@app.post("/api/ingest_text")
+async def api_ingest_text(req: TextIngestRequest):
     if not req.text.strip():
-        return JSONResponse(status_code=400, content={"error": "Empty text"})
-    await runtime.ingestion_queue.put((req.text, req.source or "web_hud"))
-    return {"ok": True, "status": "Queued in Hippocampus Bus"}
+        return JSONResponse(status_code=400, content={"error": "Brak tekstu do wgrania"})
+    await assistant.wm.ingest(req.text, source=req.source_name or "Wklejony tekst")
+    await assistant.wm.add_source_record(req.source_name or "Wklejony tekst", len(req.text), "text")
+    return {"ok": True, "message": f"Wgrano {len(req.text)} znaków do pamięci roboczej."}
 
 
-@app.post("/api/chat")
-async def api_chat(req: QueryRequest):
-    if not req.query.strip():
-        return JSONResponse(status_code=400, content={"error": "Empty query"})
-    result = await runtime.preempt_and_query(req.query)
-    return result
+@app.post("/api/upload_file")
+async def api_upload_file(file: UploadFile = File(...)):
+    filename = file.filename or "plik"
+    contents = await file.read()
+    extracted_text = ""
+
+    if filename.lower().endswith(".pdf"):
+        if pypdf:
+            try:
+                reader = pypdf.PdfReader(BytesIO(contents))
+                extracted_text = "\n".join([page.extract_text() or "" for page in reader.pages])
+            except Exception as e:
+                return JSONResponse(status_code=400, content={"error": f"Błąd czytania PDF: {e}"})
+        else:
+            return JSONResponse(status_code=400, content={"error": "Biblioteka pypdf nie jest zainstalowana"})
+    else:
+        # Text, Markdown, Code, JSON, Log
+        try:
+            extracted_text = contents.decode("utf-8")
+        except UnicodeDecodeError:
+            try:
+                extracted_text = contents.decode("latin-1")
+            except Exception:
+                return JSONResponse(status_code=400, content={"error": "Nieobsługiwany format pliku"})
+
+    if not extracted_text.strip():
+        return JSONResponse(status_code=400, content={"error": "Plik jest pusty"})
+
+    await assistant.wm.ingest(extracted_text, source=filename)
+    await assistant.wm.add_source_record(filename, len(extracted_text), "file")
+    return {
+        "ok": True,
+        "filename": filename,
+        "chars": len(extracted_text),
+        "message": f"Pomyślnie zindeksowano plik '{filename}' ({len(extracted_text)} znaków) w pamięci roboczej."
+    }
 
 
-@app.post("/api/clear")
-async def api_clear():
-    await runtime.wm.clear()
-    return {"ok": True, "status": "Memory reset"}
+@app.post("/api/clear_memory")
+async def api_clear_memory():
+    await assistant.wm.clear()
+    return {"ok": True, "message": "Pamięć robocza została wyczyszczona."}
 
 
-@app.post("/api/model")
-async def api_select_model(req: ModelSelectRequest):
-    res = runtime.model_mgr.switch_model(req.model_name)
-    return res
+@app.post("/api/clear_chat")
+async def api_clear_chat():
+    assistant.chat_history.clear()
+    return {"ok": True, "message": "Historia czatu została wyczyszczona."}
 
 
-@app.post("/api/clipboard/toggle")
-async def api_toggle_clipboard(req: ClipboardToggleRequest):
-    active = runtime.toggle_clipboard_monitor(req.active)
-    return {"ok": True, "clipboard_active": active}
+@app.post("/api/switch_model")
+async def api_switch_model(req: SwitchModelRequest):
+    threading.Thread(target=assistant.model_mgr.load_model, args=(req.model_name,), daemon=True).start()
+    return {"ok": True, "message": f"Rozpoczęto ładowanie modelu {req.model_name}"}
 
 
-@app.websocket("/ws")
-async def websocket_telemetry_endpoint(websocket: WebSocket):
+@app.post("/api/clipboard_toggle")
+async def api_clipboard_toggle(req: ClipboardRequest):
+    active = assistant.toggle_clipboard(req.active)
+    return {"ok": True, "active": active}
+
+
+@app.websocket("/ws/chat")
+async def websocket_chat_endpoint(websocket: WebSocket):
     await websocket.accept()
     try:
         while True:
-            state = await runtime.wm.snapshot()
-            telemetry = runtime.get_system_telemetry()
-            payload = {
-                "state": state,
-                "telemetry": telemetry,
-                "recent_feed": list(runtime.recent_feed)[-12:]
-            }
-            await websocket.send_text(json.dumps(payload))
-            await asyncio.sleep(0.8)
+            raw = await websocket.receive_text()
+            data = json.loads(raw)
+            user_msg = data.get("message", "").strip()
+            if not user_msg:
+                continue
+
+            # Append user message
+            assistant.chat_history.append({"role": "user", "content": user_msg})
+
+            # Retrieve dynamic working memory context
+            wm_context = await assistant.wm.get_context_for_prompt()
+
+            # Stream response
+            stream_gen = assistant.model_mgr.generate_streaming(
+                messages=list(assistant.chat_history[-6:]),
+                working_memory_context=wm_context,
+            )
+
+            assistant_accumulated = []
+            for token in stream_gen:
+                assistant_accumulated.append(token)
+                await websocket.send_text(json.dumps({
+                    "type": "token",
+                    "token": token
+                }))
+
+            complete_reply = "".join(assistant_accumulated)
+            assistant.chat_history.append({"role": "assistant", "content": complete_reply})
+
+            # Auto-ingest query & response summary into working memory
+            await assistant.wm.ingest(f"Użytkownik: {user_msg}\nAsystent: {complete_reply[:120]}", source="rozmowa")
+
+            await websocket.send_text(json.dumps({
+                "type": "done",
+                "full_text": complete_reply
+            }))
+
     except WebSocketDisconnect:
         pass
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"WS error: {e}")
 
 
-# Embedded Cockpit HUD SPA
-HTML_DASHBOARD = """<!DOCTYPE html>
-<html lang="en" class="dark">
+# =====================================================================
+# 5. Clean, Modern Frontend (ChatGPT / Claude Style SPA)
+# =====================================================================
+
+HTML_FRONTEND = """<!DOCTYPE html>
+<html lang="pl" class="dark">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Baddeley Cognitive HUD Dashboard</title>
+  <title>Cognitive AI Assistant</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
   <script>
     tailwind.config = {
       darkMode: 'class',
       theme: {
         extend: {
           colors: {
-            hud: {
-              bg: '#05070f',
-              panel: '#0d1322',
-              border: '#1a2744',
-              accent: '#38bdf8',
-              danger: '#f43f5e',
-              emerald: '#10b981',
-              purple: '#a855f7'
+            brand: {
+              50: '#f0f9ff',
+              500: '#0ea5e9',
+              600: '#0284c7',
+              700: '#0369a1',
             }
           }
         }
@@ -500,381 +557,415 @@ HTML_DASHBOARD = """<!DOCTYPE html>
     };
   </script>
   <style>
-    body { background-color: #05070f; font-family: ui-sans-serif, system-ui, sans-serif; }
-    ::-webkit-scrollbar { width: 6px; height: 6px; }
-    ::-webkit-scrollbar-track { background: #070c18; }
+    body { background-color: #0b0f19; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 4px; }
-    .glass { background: rgba(13, 19, 34, 0.85); backdrop-filter: blur(12px); border: 1px solid #1a2744; }
+    .chat-bubble-assistant { background-color: #161f30; border: 1px solid #1e293b; }
+    .chat-bubble-user { background-color: #0284c7; color: #ffffff; }
+    .typing-cursor::after { content: '▋'; animation: blink 1s infinite; color: #38bdf8; }
+    @keyframes blink { 0%, 50% { opacity: 1; } 50.1%, 100% { opacity: 0; } }
+    .markdown-content p { margin-bottom: 0.5rem; line-height: 1.5; }
+    .markdown-content p:last-child { margin-bottom: 0; }
+    .markdown-content ul { list-style-type: disc; padding-left: 1.25rem; margin-bottom: 0.5rem; }
+    .markdown-content code { background: rgba(0,0,0,0.3); padding: 0.15rem 0.35rem; border-radius: 4px; font-family: monospace; }
   </style>
 </head>
-<body class="text-slate-200 min-h-screen flex flex-col">
-  <!-- Top Header Navigation -->
-  <header class="glass border-b border-hud-border px-6 py-3 sticky top-0 z-50 flex flex-wrap items-center justify-between gap-4">
-    <div class="flex items-center space-x-3">
-      <div class="w-3 h-3 rounded-full bg-hud-accent animate-ping"></div>
-      <span class="text-lg font-bold tracking-wider text-white flex items-center gap-2">
-        BADDELEY COGNITIVE HUD <span class="text-xs font-mono px-2 py-0.5 rounded bg-blue-950 text-hud-accent border border-blue-800">WM-CORE</span>
-      </span>
+<body class="text-slate-200 h-screen flex overflow-hidden">
+
+  <!-- LEFT SIDEBAR: Context & Knowledge Manager -->
+  <aside id="sidebar" class="w-80 bg-slate-900/90 border-r border-slate-800 flex flex-col transition-all duration-300 z-30">
+    
+    <!-- Sidebar Header -->
+    <div class="p-4 border-b border-slate-800 flex items-center justify-between">
+      <div class="flex items-center space-x-2">
+        <div class="w-2.5 h-2.5 rounded-full bg-sky-400 animate-pulse"></div>
+        <span class="font-semibold text-sm tracking-wide text-white">Pamięć Robocza</span>
+      </div>
+      <button onclick="clearMemory()" title="Wyczyść pamięć" class="text-xs text-slate-400 hover:text-rose-400 p-1.5 rounded hover:bg-slate-800 transition">
+        🗑️ Wyczyść
+      </button>
     </div>
 
-    <!-- Real-time Telemetry Bar -->
-    <div class="flex items-center space-x-6 text-xs font-mono">
-      <div class="flex items-center space-x-2">
-        <span class="text-slate-400">MODEL:</span>
-        <select id="modelSelector" onchange="changeModel(this.value)" class="bg-slate-900 text-hud-accent border border-hud-border rounded px-2 py-1 outline-none cursor-pointer">
-          <option value="SmolLM2-135M">SmolLM2-135M (257 MB)</option>
-          <option value="SmolLM2-1.7B">SmolLM2-1.7B (3.4 GB)</option>
-          <option value="LLaMA-3-8B">LLaMA-3-8B (16.0 GB)</option>
-        </select>
+    <!-- Upload & Context Tabs -->
+    <div class="p-4 space-y-4 flex-1 overflow-y-auto">
+      
+      <!-- Upload File Zone -->
+      <div class="border-2 border-dashed border-slate-700 hover:border-sky-500 rounded-xl p-4 text-center cursor-pointer transition bg-slate-800/40"
+           onclick="document.getElementById('fileInput').click()"
+           ondragover="event.preventDefault()"
+           ondrop="handleFileDrop(event)">
+        <input type="file" id="fileInput" class="hidden" onchange="uploadSelectedFile(event)" accept=".pdf,.txt,.md,.json,.py,.csv,.log" />
+        <div class="text-2xl mb-1">📄</div>
+        <div class="text-xs font-medium text-slate-200">Wgraj dokument lub plik</div>
+        <div class="text-[11px] text-slate-400 mt-1">PDF, TXT, MD, JSON, Python</div>
       </div>
 
-      <div class="flex items-center space-x-2">
-        <span class="text-slate-400">RAM RSS:</span>
-        <span id="ramMetric" class="text-emerald-400 font-semibold">-- MB</span>
+      <!-- Quick Paste Context Area -->
+      <div class="space-y-1.5">
+        <div class="flex justify-between items-center text-xs font-medium text-slate-300">
+          <span>Wklej treść / notatkę:</span>
+          <button onclick="pasteFromClipboard()" class="text-[11px] text-sky-400 hover:underline">Wklej</button>
+        </div>
+        <textarea id="pasteContextInput" rows="3" placeholder="Wklej dowolny artykuł, umowę, kod lub notatki..."
+                  class="w-full bg-slate-950/80 border border-slate-700 rounded-lg p-2.5 text-xs text-slate-200 placeholder-slate-500 outline-none focus:border-sky-500 transition resize-none"></textarea>
+        <button onclick="submitPastedContext()" class="w-full bg-slate-800 hover:bg-slate-700 text-sky-400 font-medium py-1.5 rounded-lg text-xs border border-slate-700 transition">
+          + Dodaj do kontekstu asystenta
+        </button>
       </div>
 
-      <div class="flex items-center space-x-2">
-        <span class="text-slate-400">THROUGHPUT:</span>
-        <span id="tpsMetric" class="text-purple-400 font-semibold">-- t/s</span>
-      </div>
-
-      <!-- Clipboard Monitor Toggle -->
-      <div class="flex items-center space-x-2">
-        <span class="text-slate-400">CLIPBOARD:</span>
-        <button id="clipboardToggleBtn" onclick="toggleClipboard()" class="px-2.5 py-1 rounded text-xs font-bold border border-slate-700 bg-slate-900 text-slate-400 hover:border-hud-accent transition cursor-pointer">
+      <!-- Clipboard Listener Toggle -->
+      <div class="bg-slate-950/60 border border-slate-800 rounded-xl p-3 flex items-center justify-between">
+        <div>
+          <div class="text-xs font-semibold text-slate-200">Podsłuch schowka</div>
+          <div class="text-[11px] text-slate-400">Automatycznie chłonie kopiowany tekst</div>
+        </div>
+        <button id="clipBtn" onclick="toggleClipboard()" class="px-2.5 py-1 rounded text-xs font-bold border border-slate-700 bg-slate-800 text-slate-400 transition">
           OFF
         </button>
       </div>
 
-      <div id="busStatusBadge" class="px-2 py-0.5 rounded text-[11px] font-bold bg-emerald-950 border border-emerald-700 text-emerald-300">
-        BUS ACTIVE
+      <!-- Ingested Sources & Facts List -->
+      <div class="space-y-2 pt-2">
+        <div class="flex items-center justify-between text-xs font-semibold text-slate-400 uppercase tracking-wider">
+          <span>Aktywny kontekst (<span id="sourceCount">0</span>)</span>
+          <span id="factBadge" class="text-[10px] text-emerald-400 font-mono">0 faktów</span>
+        </div>
+        <div id="sourcesList" class="space-y-1.5 text-xs">
+          <div class="text-slate-500 italic text-[11px]">Brak wgranego kontekstu. Wgraj plik lub wklej tekst powyżej.</div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Sidebar Footer Telemetry -->
+    <div class="p-3 border-t border-slate-800 text-[11px] text-slate-400 flex justify-between items-center bg-slate-950/40">
+      <span id="ramUsage">RAM: -- MB</span>
+      <span id="deviceBadge" class="font-mono text-sky-400">MPS</span>
+    </div>
+  </aside>
+
+  <!-- MAIN CHAT AREA -->
+  <main class="flex-1 flex flex-col bg-[#0b0f19] relative">
+    
+    <!-- Top Header -->
+    <header class="h-14 border-b border-slate-800 px-6 flex items-center justify-between bg-slate-900/60 backdrop-blur">
+      <div class="flex items-center space-x-3">
+        <button onclick="toggleSidebar()" class="text-slate-400 hover:text-white p-1 rounded hover:bg-slate-800 transition">
+          ☰
+        </button>
+        <div class="font-bold text-sm text-white flex items-center gap-2">
+          Cognitive Assistant <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-sky-950 text-sky-300 border border-sky-800">O(1) Memory</span>
+        </div>
+      </div>
+
+      <!-- Model Selector & Status -->
+      <div class="flex items-center space-x-3 text-xs">
+        <span id="statusIndicator" class="text-slate-400 flex items-center gap-1.5">
+          <span class="w-2 h-2 rounded-full bg-emerald-400"></span> Gotowy
+        </span>
+        <select id="modelSelect" onchange="switchModel(this.value)" class="bg-slate-800 text-sky-300 border border-slate-700 rounded-lg px-2.5 py-1 text-xs outline-none focus:border-sky-500 cursor-pointer">
+          <option value="SmolLM2-1.7B" selected>SmolLM2-1.7B (Szybki)</option>
+          <option value="LLaMA-3-8B">LLaMA-3-8B (Mocny)</option>
+          <option value="SmolLM2-135M">SmolLM2-135M (Lekki)</option>
+        </select>
+        <button onclick="clearChat()" class="text-slate-400 hover:text-white px-2 py-1 rounded hover:bg-slate-800 transition">
+          Nowy czat
+        </button>
+      </div>
+    </header>
+
+    <!-- Chat Messages Container -->
+    <div id="chatContainer" class="flex-1 overflow-y-auto p-6 space-y-4 max-w-4xl w-full mx-auto">
+      
+      <!-- Welcome Message -->
+      <div class="chat-bubble-assistant p-4 rounded-2xl max-w-2xl text-xs space-y-2">
+        <div class="font-semibold text-sky-400 flex items-center gap-2">
+          <span>🤖 Asystent Kognitywny</span>
+        </div>
+        <p class="leading-relaxed text-slate-200">
+          Cześć! Jestem Twoim lokalnym asystentem AI. Posiadam aktywną pamięć roboczą – możesz wgrać dokument (PDF, TXT, notatki), wkleić artykuł po lewej stronie, lub włączyć podsłuch schowka.
+        </p>
+        <div class="pt-2 flex flex-wrap gap-2 text-[11px]">
+          <button onclick="sendQuickPrompt('Kim jesteś i jak działasz?')" class="bg-slate-800 hover:bg-slate-700 text-sky-300 px-2.5 py-1 rounded-lg border border-slate-700 transition">
+            💡 Kim jesteś?
+          </button>
+          <button onclick="sendQuickPrompt('Podsumuj wgrany kontekst.')" class="bg-slate-800 hover:bg-slate-700 text-emerald-300 px-2.5 py-1 rounded-lg border border-slate-700 transition">
+            📜 Podsumuj kontekst
+          </button>
+          <button onclick="sendQuickPrompt('Jakie są kluczowe wnioski z moich materiałów?')" class="bg-slate-800 hover:bg-slate-700 text-amber-300 px-2.5 py-1 rounded-lg border border-slate-700 transition">
+            🔍 Kluczowe wnioski
+          </button>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Input Bar -->
+    <div class="p-4 border-t border-slate-800/80 bg-slate-900/40">
+      <div class="max-w-4xl mx-auto flex items-end gap-2">
+        <div class="flex-1 bg-slate-900 border border-slate-700 focus-within:border-sky-500 rounded-2xl p-2 flex items-center gap-2 transition">
+          <textarea id="messageInput" rows="1" placeholder="Napisz wiadomość lub zadaj pytanie o wgrany kontekst... (Enter aby wysłać)"
+                    onkeydown="handleKeyDown(event)"
+                    oninput="autoResize(this)"
+                    class="flex-1 bg-transparent text-slate-100 placeholder-slate-500 text-xs outline-none resize-none max-h-32 px-2 py-1"></textarea>
+          <button onclick="sendMessage()" class="bg-sky-500 hover:bg-sky-400 text-slate-950 font-bold p-2 rounded-xl transition">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"></path>
+            </svg>
+          </button>
+        </div>
+      </div>
+      <div class="text-[11px] text-center text-slate-500 mt-2">
+        Wszystkie obliczenia i modele działają w 100% lokalnie na Twoim komputerze Mac.
       </div>
     </div>
-  </header>
 
-  <!-- Main Dashboard Layout -->
-  <main class="flex-1 p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 max-w-7xl mx-auto w-full">
-    
-    <!-- LEFT: Baddeley 4-Buffer Visual Cockpit (5 Cols) -->
-    <section class="lg:col-span-5 flex flex-col space-y-4">
-      <div class="flex items-center justify-between">
-        <h2 class="text-sm font-semibold tracking-wide uppercase text-slate-300 flex items-center gap-2">
-          <span class="w-2 h-2 rounded bg-hud-accent"></span> Quadripartite Working Memory (S)
-        </h2>
-        <div class="flex items-center gap-2">
-          <button onclick="clearMemory()" class="text-[10px] text-rose-400 hover:text-rose-300 bg-rose-950/40 hover:bg-rose-950/80 px-2 py-0.5 rounded border border-rose-800 transition cursor-pointer">
-            Clear WM
-          </button>
-          <span id="preemptMetric" class="text-xs font-mono text-amber-400 bg-amber-950/50 px-2 py-0.5 rounded border border-amber-800">Preemptions: 0</span>
-        </div>
-      </div>
-
-      <!-- 1. Central Executive Card -->
-      <div class="glass rounded-lg p-4 border-l-4 border-l-hud-accent">
-        <div class="flex justify-between items-center mb-2">
-          <span class="text-xs font-bold uppercase tracking-wider text-hud-accent">1. Central Executive</span>
-          <span id="ceBudget" class="text-xs font-mono text-slate-300">Attention: 1.00</span>
-        </div>
-        <p id="ceFocus" class="text-xs text-slate-200 font-medium bg-slate-900/80 p-2.5 rounded border border-slate-800/80">
-          Initial sensory equilibrium...
-        </p>
-        <div class="mt-2 flex flex-wrap gap-1.5" id="ceGoals"></div>
-      </div>
-
-      <!-- 2. Visuospatial Sketchpad Card -->
-      <div class="glass rounded-lg p-4 border-l-4 border-l-emerald-400">
-        <div class="flex justify-between items-center mb-2">
-          <span class="text-xs font-bold uppercase tracking-wider text-emerald-400">2. Visuospatial Sketchpad</span>
-          <span class="text-xs font-mono text-slate-400" id="vsSlotCount">0 Slots</span>
-        </div>
-        <div id="vsSlotsContainer" class="grid grid-cols-2 gap-2 min-h-[64px]">
-          <span class="text-xs text-slate-500 col-span-2 italic">Brak zarejestrowanych współrzędnych...</span>
-        </div>
-      </div>
-
-      <!-- 3. Phonological Loop Card -->
-      <div class="glass rounded-lg p-4 border-l-4 border-l-purple-400">
-        <div class="flex justify-between items-center mb-2">
-          <span class="text-xs font-bold uppercase tracking-wider text-purple-400">3. Phonological Loop (Articulatory Store)</span>
-          <span class="text-xs font-mono text-slate-400">Decay 12s</span>
-        </div>
-        <div id="phonologicalContainer" class="flex flex-wrap gap-1.5 min-h-[48px]">
-          <span class="text-xs text-slate-500 italic">Pusta pętla werbalna...</span>
-        </div>
-      </div>
-
-      <!-- 4. Episodic Buffer Card -->
-      <div class="glass rounded-lg p-4 border-l-4 border-l-amber-400 flex-1">
-        <div class="flex justify-between items-center mb-2">
-          <span class="text-xs font-bold uppercase tracking-wider text-amber-400">4. Episodic Buffer (Multimodal Binding)</span>
-          <span id="epCapacity" class="text-xs font-mono text-slate-400">Cap: 7 chunks</span>
-        </div>
-        <div id="episodicContainer" class="space-y-2 max-h-56 overflow-y-auto pr-1">
-          <span class="text-xs text-slate-500 italic">Oczekiwanie na integrację epizodyczną...</span>
-        </div>
-      </div>
-    </section>
-
-    <!-- RIGHT: Cortex Interactive Chat & Ingestion Engine (7 Cols) -->
-    <section class="lg:col-span-7 flex flex-col space-y-4">
-      
-      <!-- Chat Cockpit -->
-      <div class="glass rounded-lg p-4 flex flex-col h-[420px]">
-        <div class="flex justify-between items-center pb-3 mb-2 border-b border-hud-border">
-          <div class="flex items-center space-x-2">
-            <h2 class="text-sm font-semibold tracking-wide uppercase text-slate-300">Executive Cortex Query</h2>
-            <span class="text-[10px] font-mono text-slate-500">(Triggers Preemption Handover)</span>
-          </div>
-          <span id="latencyBadge" class="text-xs font-mono text-slate-400">Latency: -- ms</span>
-        </div>
-
-        <!-- Chat Log -->
-        <div id="chatBox" class="flex-1 overflow-y-auto space-y-3 pr-2 text-xs font-mono">
-          <div class="bg-slate-900/90 border border-slate-800 p-3 rounded text-slate-300">
-            🤖 Cortex aktywny. Zadaj pytanie – szyna sensoryczna zostanie wstrzymana, a odpowiedź zostanie zsyntetyzowana z aktualnego stanu 4 buforów Baddeleya.
-          </div>
-        </div>
-
-        <!-- Sample prompts -->
-        <div class="py-2 flex flex-wrap gap-1.5 text-[11px]">
-          <button onclick="fillQuery('Co zarejestrowałeś w ostatnim czasie?')" class="bg-slate-900 hover:bg-slate-800 text-sky-300 px-2 py-0.5 rounded border border-slate-800 transition cursor-pointer">
-            💡 Ostatnie fakty
-          </button>
-          <button onclick="fillQuery('Jaki jest stan szkicownika wzrokowo-przestrzennego?')" class="bg-slate-900 hover:bg-slate-800 text-emerald-300 px-2 py-0.5 rounded border border-slate-800 transition cursor-pointer">
-            🗺️ Szkicownik
-          </button>
-          <button onclick="fillQuery('Podsumuj zawartość bufora epizodycznego.')" class="bg-slate-900 hover:bg-slate-800 text-amber-300 px-2 py-0.5 rounded border border-slate-800 transition cursor-pointer">
-            📜 Podsumowanie
-          </button>
-        </div>
-
-        <!-- Query Input -->
-        <form id="chatForm" onsubmit="submitQuery(event)" class="mt-1 flex gap-2">
-          <input id="queryInput" type="text" placeholder="Wprowadź zapytanie do Centralnego Zarządcy..."
-                 class="flex-1 bg-slate-900 text-slate-200 border border-hud-border rounded px-3 py-2 text-xs outline-none focus:border-hud-accent" />
-          <button type="submit" class="bg-hud-accent hover:bg-sky-400 text-slate-950 font-bold px-4 py-2 rounded text-xs transition cursor-pointer">
-            Preempt & Query
-          </button>
-        </form>
-      </div>
-
-      <!-- Live Feed & Direct Text Ingestion -->
-      <div class="glass rounded-lg p-4 grid grid-cols-1 md:grid-cols-2 gap-4 flex-1">
-        
-        <!-- Sensory Ingestion Box -->
-        <div class="flex flex-col space-y-2">
-          <span class="text-xs font-bold uppercase tracking-wider text-slate-400">Hippocampus Direct Ingestion</span>
-          <textarea id="ingestInput" rows="3" placeholder="Wklej tekst, logi lub transkrypt do asynchronicznej asymilacji..."
-                    class="w-full bg-slate-900 text-slate-200 border border-hud-border rounded p-2 text-xs outline-none focus:border-hud-accent"></textarea>
-          <div class="flex justify-between items-center">
-            <button onclick="loadSampleText()" class="text-[10px] text-slate-400 hover:text-sky-300 transition cursor-pointer">
-              [Załaduj próbkę M&A]
-            </button>
-            <button onclick="submitIngestion()" class="bg-slate-800 hover:bg-slate-700 text-hud-accent font-semibold py-1 px-3 rounded text-xs border border-hud-border transition cursor-pointer">
-              Ingest to Bus
-            </button>
-          </div>
-        </div>
-
-        <!-- Live Event Stream Feed -->
-        <div class="flex flex-col space-y-2">
-          <span class="text-xs font-bold uppercase tracking-wider text-slate-400">Live Sensory Feed</span>
-          <div id="liveFeed" class="h-28 overflow-y-auto space-y-1.5 pr-1 font-mono text-[11px]">
-            <span class="text-slate-500 italic">Szyna sensoryczna nasłuchuje...</span>
-          </div>
-        </div>
-
-      </div>
-
-    </section>
   </main>
 
   <script>
     let ws;
-    let clipboardActive = false;
+    let currentAssistantBubble = null;
+    let isGenerating = false;
+    let clipboardState = false;
 
-    function connectWS() {
+    function connectChatWS() {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
-      
+      ws = new WebSocket(`${protocol}//${window.location.host}/ws/chat`);
+
       ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
-        updateUI(data);
+        if (data.type === 'token') {
+          if (currentAssistantBubble) {
+            currentAssistantBubble.rawText += data.token;
+            currentAssistantBubble.querySelector('.markdown-content').innerHTML = marked.parse(currentAssistantBubble.rawText);
+            scrollChat();
+          }
+        } else if (data.type === 'done') {
+          if (currentAssistantBubble) {
+            currentAssistantBubble.classList.remove('typing-cursor');
+            currentAssistantBubble = null;
+          }
+          isGenerating = false;
+          refreshState();
+        }
       };
 
       ws.onclose = () => {
-        setTimeout(connectWS, 1500);
+        setTimeout(connectChatWS, 1500);
       };
     }
 
-    function updateUI(data) {
-      const { state, telemetry, recent_feed } = data;
+    async function refreshState() {
+      try {
+        const res = await fetch('/api/state');
+        const data = await res.json();
 
-      // Telemetry update
-      document.getElementById('ramMetric').innerText = `${telemetry.ram_rss_mb} MB`;
-      document.getElementById('tpsMetric').innerText = `${telemetry.throughput_tps} t/s`;
-      document.getElementById('preemptMetric').innerText = `Preemptions: ${state.central_executive.preemption_count}`;
-      
-      // Preemption badge
-      const busBadge = document.getElementById('busStatusBadge');
-      if (state.central_executive.is_preempted) {
-        busBadge.innerText = 'PREEMPTED (PAUSED)';
-        busBadge.className = 'px-2 py-0.5 rounded text-[11px] font-bold bg-rose-950 border border-rose-700 text-rose-300 animate-pulse';
-      } else {
-        busBadge.innerText = 'BUS ACTIVE';
-        busBadge.className = 'px-2 py-0.5 rounded text-[11px] font-bold bg-emerald-950 border border-emerald-700 text-emerald-300';
-      }
+        // RAM & Device
+        document.getElementById('ramUsage').innerText = `RAM: ${data.telemetry.ram_rss_mb} MB`;
+        document.getElementById('deviceBadge').innerText = data.telemetry.device;
 
-      // Clipboard status
-      clipboardActive = telemetry.clipboard_active;
-      const clipBtn = document.getElementById('clipboardToggleBtn');
-      if (clipboardActive) {
-        clipBtn.innerText = 'ON';
-        clipBtn.className = 'px-2.5 py-1 rounded text-xs font-bold border border-emerald-600 bg-emerald-950 text-emerald-300 cursor-pointer';
-      } else {
-        clipBtn.innerText = 'OFF';
-        clipBtn.className = 'px-2.5 py-1 rounded text-xs font-bold border border-slate-700 bg-slate-900 text-slate-400 cursor-pointer';
-      }
+        // Model Status
+        const statusEl = document.getElementById('statusIndicator');
+        if (data.telemetry.is_loading) {
+          statusEl.innerHTML = `<span class="w-2 h-2 rounded-full bg-amber-400 animate-spin"></span> ${data.telemetry.model_status}`;
+        } else {
+          statusEl.innerHTML = `<span class="w-2 h-2 rounded-full bg-emerald-400"></span> ${data.telemetry.model_status}`;
+        }
 
-      // 1. Central Executive
-      document.getElementById('ceFocus').innerText = state.central_executive.focus;
-      document.getElementById('ceBudget').innerText = `Attention: ${state.central_executive.attention_budget}`;
-      const goalsDiv = document.getElementById('ceGoals');
-      goalsDiv.innerHTML = state.central_executive.goals.map(g => 
-        `<span class="text-[10px] font-mono px-2 py-0.5 rounded bg-blue-950 text-sky-300 border border-blue-900">${g}</span>`
-      ).join('');
+        // Clipboard
+        clipboardState = data.telemetry.clipboard_active;
+        const clipBtn = document.getElementById('clipBtn');
+        if (clipboardState) {
+          clipBtn.innerText = 'ON';
+          clipBtn.className = 'px-2.5 py-1 rounded text-xs font-bold border border-emerald-600 bg-emerald-950 text-emerald-300';
+        } else {
+          clipBtn.innerText = 'OFF';
+          clipBtn.className = 'px-2.5 py-1 rounded text-xs font-bold border border-slate-700 bg-slate-800 text-slate-400';
+        }
 
-      // 2. Visuospatial Sketchpad
-      const vsContainer = document.getElementById('vsSlotsContainer');
-      document.getElementById('vsSlotCount').innerText = `${state.visuospatial_sketchpad.length} Slots`;
-      if (state.visuospatial_sketchpad.length > 0) {
-        vsContainer.innerHTML = state.visuospatial_sketchpad.map(s => `
-          <div class="bg-slate-900/90 border border-emerald-950 p-1.5 rounded flex flex-col">
-            <div class="flex justify-between text-[10px] text-emerald-400 font-mono">
-              <span>${s.slot_id}</span>
-              <span>[${s.spatial_relation}]</span>
+        // Sources & Facts
+        document.getElementById('sourceCount').innerText = data.memory.sources.length;
+        document.getElementById('factBadge').innerText = `${data.memory.fact_count} faktów`;
+
+        const sourcesList = document.getElementById('sourcesList');
+        if (data.memory.sources.length > 0) {
+          sourcesList.innerHTML = data.memory.sources.map(s => `
+            <div class="bg-slate-950/80 border border-slate-800 p-2 rounded-lg flex items-center justify-between">
+              <span class="truncate text-slate-200">${s.name}</span>
+              <span class="text-[10px] text-slate-400">${Math.round(s.chars / 1000)}k zn.</span>
             </div>
-            <span class="text-[11px] text-slate-300 truncate mt-0.5">${s.entity}</span>
-          </div>
-        `).join('');
-      } else {
-        vsContainer.innerHTML = '<span class="text-xs text-slate-500 col-span-2 italic">Brak zarejestrowanych współrzędnych...</span>';
-      }
-
-      // 3. Phonological Loop
-      const phonContainer = document.getElementById('phonologicalContainer');
-      if (state.phonological_loop.length > 0) {
-        phonContainer.innerHTML = state.phonological_loop.map(p => `
-          <span class="px-2 py-0.5 rounded bg-purple-950/80 text-purple-300 border border-purple-800 text-[11px] font-mono">
-            ${p.token} <small class="text-purple-400 font-bold">(x${p.rehearsals})</small>
-          </span>
-        `).join('');
-      } else {
-        phonContainer.innerHTML = '<span class="text-xs text-slate-500 italic">Pusta pętla werbalna...</span>';
-      }
-
-      // 4. Episodic Buffer
-      const epContainer = document.getElementById('episodicContainer');
-      if (state.episodic_buffer.length > 0) {
-        epContainer.innerHTML = state.episodic_buffer.map(e => `
-          <div class="bg-slate-900/90 border border-amber-950 p-2 rounded text-xs font-mono">
-            <div class="flex justify-between text-[10px] text-amber-400">
-              <span>${e.episode_id} [${e.source}]</span>
-              <span>${e.timestamp}</span>
-            </div>
-            <p class="text-slate-300 text-[11px] mt-1">${e.summary}</p>
-          </div>
-        `).reverse().join('');
-      } else {
-        epContainer.innerHTML = '<span class="text-xs text-slate-500 italic">Oczekiwanie na integrację epizodyczną...</span>';
-      }
-
-      // Feed
-      const feedDiv = document.getElementById('liveFeed');
-      if (recent_feed && recent_feed.length > 0) {
-        feedDiv.innerHTML = recent_feed.map(f => `
-          <div class="text-slate-400 border-b border-slate-900 pb-1">
-            <span class="text-hud-accent">[${f.time}]</span>
-            <span class="text-amber-400">(${f.source})</span>
-            <span class="text-slate-300 truncate">${f.text}</span>
-          </div>
-        `).reverse().join('');
+          `).reverse().join('');
+        } else {
+          sourcesList.innerHTML = '<div class="text-slate-500 italic text-[11px]">Brak wgranego kontekstu. Wgraj plik lub wklej tekst powyżej.</div>';
+        }
+      } catch (e) {
+        console.error(e);
       }
     }
 
-    async function submitQuery(e) {
-      e.preventDefault();
-      const input = document.getElementById('queryInput');
-      const query = input.value.trim();
-      if (!query) return;
+    function sendMessage() {
+      const input = document.getElementById('messageInput');
+      const text = input.value.trim();
+      if (!text || isGenerating) return;
       input.value = '';
+      input.rows = 1;
 
-      const chatBox = document.getElementById('chatBox');
-      chatBox.innerHTML += `
-        <div class="bg-blue-950/40 border border-blue-900 p-2.5 rounded text-sky-200">
-          <strong>User:</strong> ${query}
+      // Add user message
+      const chatContainer = document.getElementById('chatContainer');
+      const userDiv = document.createElement('div');
+      userDiv.className = 'flex justify-end';
+      userDiv.innerHTML = `
+        <div class="chat-bubble-user p-3 px-4 rounded-2xl max-w-xl text-xs whitespace-pre-wrap">
+          ${escapeHtml(text)}
         </div>
       `;
-      chatBox.scrollTop = chatBox.scrollHeight;
+      chatContainer.appendChild(userDiv);
 
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ query })
-      });
-      const data = await res.json();
-
-      document.getElementById('latencyBadge').innerText = `Latency: ${data.latency_ms} ms`;
-      chatBox.innerHTML += `
-        <div class="bg-slate-900/90 border border-slate-700 p-3 rounded text-slate-100 whitespace-pre-wrap leading-relaxed">
-          ${data.answer}
-        </div>
+      // Create empty assistant message with typing effect
+      const assistantDiv = document.createElement('div');
+      assistantDiv.className = 'chat-bubble-assistant p-4 rounded-2xl max-w-2xl text-xs space-y-1 typing-cursor';
+      assistantDiv.rawText = '';
+      assistantDiv.innerHTML = `
+        <div class="font-semibold text-sky-400 text-[11px] mb-1">Asystent</div>
+        <div class="markdown-content leading-relaxed text-slate-200"></div>
       `;
-      chatBox.scrollTop = chatBox.scrollHeight;
+      chatContainer.appendChild(assistantDiv);
+      currentAssistantBubble = assistantDiv;
+      isGenerating = true;
+
+      scrollChat();
+
+      // Send to WebSocket
+      ws.send(JSON.stringify({ message: text }));
     }
 
-    async function submitIngestion() {
-      const input = document.getElementById('ingestInput');
+    function sendQuickPrompt(prompt) {
+      document.getElementById('messageInput').value = prompt;
+      sendMessage();
+    }
+
+    function handleKeyDown(e) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
+    }
+
+    function autoResize(el) {
+      el.style.height = 'auto';
+      el.style.height = Math.min(el.scrollHeight, 128) + 'px';
+    }
+
+    function scrollChat() {
+      const c = document.getElementById('chatContainer');
+      c.scrollTop = c.scrollHeight;
+    }
+
+    async function uploadSelectedFile(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      const formData = new FormData();
+      formData.append('file', file);
+
+      try {
+        const res = await fetch('/api/upload_file', { method: 'POST', body: formData });
+        const data = await res.json();
+        if (data.ok) {
+          alert(`✓ ${data.message}`);
+          refreshState();
+        } else {
+          alert(`Błąd: ${data.error}`);
+        }
+      } catch (err) {
+        alert('Wystąpił błąd podczas wysyłania pliku');
+      }
+    }
+
+    function handleFileDrop(e) {
+      e.preventDefault();
+      const files = e.dataTransfer.files;
+      if (files.length > 0) {
+        document.getElementById('fileInput').files = files;
+        uploadSelectedFile({ target: { files } });
+      }
+    }
+
+    async function submitPastedContext() {
+      const input = document.getElementById('pasteContextInput');
       const text = input.value.trim();
       if (!text) return;
       input.value = '';
-      await fetch('/api/ingest', {
+
+      const res = await fetch('/api/ingest_text', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ text, source: 'manual_hud' })
+        body: JSON.stringify({ text, source_name: 'Wklejona notatka' })
       });
+      const data = await res.json();
+      if (data.ok) {
+        refreshState();
+      }
     }
 
-    async function clearMemory() {
-      await fetch('/api/clear', { method: 'POST' });
-    }
-
-    function fillQuery(q) {
-      document.getElementById('queryInput').value = q;
-    }
-
-    function loadSampleText() {
-      document.getElementById('ingestInput').value = 
-        "Spotkanie zarządu: Wycena pre-money została potwierdzona na kwotę 45,000,000 EUR. Poprzednia oferta 12M EUR została odrzucona. Klucz autoryzacji: TITAN-KEY-9901-X w klastrze GPU OMNI-DATA-CENTER.";
-    }
-
-    async function changeModel(modelName) {
-      await fetch('/api/model', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ model_name: modelName })
-      });
+    async function pasteFromClipboard() {
+      try {
+        const text = await navigator.clipboard.readText();
+        document.getElementById('pasteContextInput').value = text;
+      } catch (e) {
+        alert('Zezwól przeglądarce na dostęp do schowka');
+      }
     }
 
     async function toggleClipboard() {
-      await fetch('/api/clipboard/toggle', {
+      await fetch('/api/clipboard_toggle', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ active: !clipboardActive })
+        body: JSON.stringify({ active: !clipboardState })
       });
+      refreshState();
     }
 
-    window.addEventListener('load', connectWS);
+    async function switchModel(name) {
+      await fetch('/api/switch_model', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ model_name: name })
+      });
+      refreshState();
+    }
+
+    async function clearMemory() {
+      if (confirm('Czy na pewno chcesz wyczyścić pamięć roboczą asystenta?')) {
+        await fetch('/api/clear_memory', { method: 'POST' });
+        refreshState();
+      }
+    }
+
+    async function clearChat() {
+      await fetch('/api/clear_chat', { method: 'POST' });
+      document.getElementById('chatContainer').innerHTML = `
+        <div class="chat-bubble-assistant p-4 rounded-2xl max-w-2xl text-xs space-y-2">
+          <div class="font-semibold text-sky-400">🤖 Nowy czat</div>
+          <p class="text-slate-200">Pamięć robocza zachowana. O czym chcesz porozmawiać?</p>
+        </div>
+      `;
+    }
+
+    function toggleSidebar() {
+      const s = document.getElementById('sidebar');
+      s.classList.toggle('-ml-80');
+    }
+
+    function escapeHtml(text) {
+      return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    window.addEventListener('load', () => {
+      connectChatWS();
+      refreshState();
+      setInterval(refreshState, 3000);
+    });
   </script>
 </body>
 </html>
@@ -883,81 +974,55 @@ HTML_DASHBOARD = """<!DOCTYPE html>
 
 @app.get("/", response_class=HTMLResponse)
 async def serve_dashboard():
-    return HTMLResponse(content=HTML_DASHBOARD)
+    return HTMLResponse(content=HTML_FRONTEND)
 
 
 # =====================================================================
-# 5. Headless Verification Engine
+# 6. Headless Verification Engine
 # =====================================================================
 
 async def run_headless_tests():
-    """Automated verification routine matching implementation plan requirements."""
+    """Verifies that the cognitive memory and neural model interfaces work."""
     print("\n=======================================================")
-    print("Starting Baddeley Cognitive Working Memory Headless Verification")
+    print("Starting Baddeley Cognitive Working Memory Assistant Tests")
     print("=======================================================")
 
-    test_runtime = AsyncCognitiveRuntime()
-    await test_runtime.start()
+    test_wm = CognitiveWorkingMemory()
 
-    # Test 1: Model Manager detection
-    print("[1/5] Testing Model Manager Detection & Hot-swap...")
-    models = test_runtime.model_mgr.AVAILABLE_MODELS
-    assert "SmolLM2-135M" in models, "SmolLM2-135M missing"
-    res = test_runtime.model_mgr.switch_model("SmolLM2-1.7B")
-    assert res["ok"] is True, "Hot swap failed"
-    print(f"      ModelManager active: {test_runtime.model_mgr.current_model_name}")
+    print("[1/4] Testing Working Memory Ingestion & Distillation...")
+    await test_wm.ingest("Pre-money wycena została ustalona na 45,000,000 EUR. Klucz: TITAN-9901.")
+    await test_wm.ingest("Wdrożenie na klastrze produkcyjnym zaplanowano na piątek.")
+    snap = await test_wm.snapshot()
+    assert snap["fact_count"] > 0, "Facts were not ingested"
+    print(f"      Distilled {snap['fact_count']} facts into working memory.")
 
-    # Test 2: Ingestion & Baddeley 4-Buffer Population
-    print("[2/5] Ingesting synthetic multimodal data into sensory bus...")
-    await test_runtime.ingestion_queue.put((
-        "Konfiguracja slotu bazy danych po lewej stronie ekranu RAM GPU.",
-        "test_suite"
-    ))
-    await test_runtime.ingestion_queue.put((
-        "Algorytm przeszukuje wierzcholki grafu w pamieci roboczej.",
-        "test_suite"
-    ))
-    # Let background hippocampus process queue
-    await asyncio.sleep(0.5)
+    print("[2/4] Testing Dynamic Prompt Context Generation...")
+    ctx = await test_wm.get_context_for_prompt()
+    assert "45,000,000" in ctx or "TITAN" in ctx or "klastrze" in ctx
+    print(f"      Generated prompt context preview ({len(ctx)} chars):\n      {ctx[:120]}...")
 
-    snap = await test_runtime.wm.snapshot()
-    assert len(snap["phonological_loop"]) > 0, "Phonological loop empty"
-    assert len(snap["visuospatial_sketchpad"]) > 0, "Visuospatial sketchpad empty"
-    assert len(snap["episodic_buffer"]) >= 2, "Episodic buffer missing items"
-    print(f"      Phonological tokens: {len(snap['phonological_loop'])}")
-    print(f"      Visuospatial slots:  {len(snap['visuospatial_sketchpad'])}")
-    print(f"      Episodic episodes:   {len(snap['episodic_buffer'])}")
+    print("[3/4] Testing Neural Model Manager Configuration...")
+    mgr = NeuralModelManager()
+    opts = mgr.get_model_options()
+    assert len(opts) >= 3, "Model options missing"
+    print(f"      Available models: {[o['id'] for o in opts]} on device: {mgr.device.upper()}")
 
-    # Test 3: Query Preemption & Cortex Handover
-    print("[3/5] Testing Query Preemption & Cognitive Synthesis...")
-    query_res = await test_runtime.preempt_and_query("Gdzie znajduje sie baza danych?")
-    assert query_res["preemption_occurred"] is True, "Preemption flag not triggered"
-    assert "Cortex Exec" in query_res["answer"], "Answer synthesis invalid"
-    print(f"      Query latency: {query_res['latency_ms']} ms | Preemption verified.")
+    print("[4/4] Testing Memory Reset...")
+    await test_wm.clear()
+    snap_after = await test_wm.snapshot()
+    assert snap_after["fact_count"] == 0, "Memory reset failed"
+    print("      Memory cleared cleanly.")
 
-    # Test 4: Clipboard Monitor Graceful Toggle
-    print("[4/5] Testing Clipboard Watcher State Machine...")
-    toggled = test_runtime.toggle_clipboard_monitor(True)
-    assert isinstance(toggled, bool)
-    test_runtime.toggle_clipboard_monitor(False)
-    print("      Clipboard toggle state handled cleanly.")
-
-    # Test 5: Telemetry Extraction
-    print("[5/5] Checking System Telemetry...")
-    telemetry = test_runtime.get_system_telemetry()
-    print(f"      RSS RAM: {telemetry['ram_rss_mb']} MB | Throughput: {telemetry['throughput_tps']} t/s")
-
-    test_runtime.is_running = False
-    print("\n[TEST PASSED] Headless engine verification successful. All 5 checks passed.\n")
+    print("\n[TEST PASSED] All cognitive assistant tests completed successfully.\n")
 
 
 # =====================================================================
-# 6. Main Entry Point
+# 7. Main Entry Point
 # =====================================================================
 
 def main():
     parser = argparse.ArgumentParser(description="Baddeley Cognitive Working Memory Assistant")
-    parser.add_argument("--test", action="store_true", help="Run automated headless verification suite and exit")
+    parser.add_argument("--test", action="store_true", help="Run automated verification suite and exit")
     parser.add_argument("--port", type=int, default=8000, help="Port to serve (default: 8000)")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="Host address (default: 127.0.0.1)")
     parser.add_argument("--no-browser", action="store_true", help="Do not open browser automatically")
@@ -977,8 +1042,8 @@ def main():
         threading.Thread(target=open_browser, daemon=True).start()
 
     print(f"\n=======================================================")
-    print(f"  🧠 BADDELEY COGNITIVE WORKING MEMORY COCKPIT HUD")
-    print(f"  Local Web Dashboard: {url}")
+    print(f"  🧠 BADDELEY COGNITIVE WORKING MEMORY ASSISTANT")
+    print(f"  Local Web App: {url}")
     print(f"=======================================================\n")
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
 
