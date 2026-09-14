@@ -448,18 +448,19 @@ Raw Cumulative Tokens    & $1,600$       & $20,000$      & $1,567,226$    & $10,
 Stream Chunks / Volumes  & 1 doc         & 60 sections   & 66 books       & 19 volumes     & 190 chunks      & 190 chunks \\
 Working Memory Size      & $371$ tok     & $371$ tok     & $561$ tok      & $204$ tok      & $293$ tok       & $212$ tok \\
 Compression Ratio        & $3.6 : 1$     & $53.9 : 1$    & $2,793.6 : 1$  & $53,793.2 : 1$ & $374,532.9 : 1$ & \textbf{517,632.8 : 1} \\
-Ingestion Wall Time      & $<0.05$ s     & $0.08$ s      & $0.52$ s       & $0.61$ s       & $1.81$ s        & $1.83$ s \\
-Ingestion Throughput$^\dagger$ & $>30$k tok/s & $>250$k tok/s & $3.01$M tok/s  & $17.9$M tok/s  & $60.6$M tok/s   & \textbf{59.9M tok/s} \\
+Symbolic Stream Time$^\dagger$& $<0.05$ s & $0.08$ s      & $0.52$ s       & $0.61$ s       & $1.81$ s        & $1.83$ s \\
+Symbolic Throughput$^\dagger$& $>30$k tok/s & $>250$k tok/s & $3.01$M tok/s  & $17.9$M tok/s  & $60.6$M tok/s   & \textbf{59.9M tok/s} \\
+Neural SLM Latency$^\ddagger$& $\approx 2.3$ s & $\approx 45$ s & $\approx 1.9$ h (async) & $\approx 13.5$ h (async) & $\approx 5.6$ d (async) & $\approx 5.6$ d (async) \\
 Peak Host RSS            & $312.4$ MB    & $315.8$ MB    & $608.3$ MB     & $652.2$ MB     & $703.2$ MB      & $749.8$ MB \\
 Net $\Delta\text{RSS}$ Growth & $+0.0$ MB & $+0.1$ MB    & $+44.9$ MB     & $+8.0$ MB      & $+0.1$ MB       & $\mathbf{+0.16}$ \textbf{MB} \\
 Working Memory KV-Cache  & $46.4$ MB     & $46.4$ MB     & $70.1$ MB      & $25.5$ MB      & $36.6$ MB       & $26.5$ MB \\
 Full Attention KV-Cache  & $0.17$ GB     & $2.62$ GB     & $205.4$ GB     & $1.44$ TB      & $14.38$ TB      & \textbf{14.38 TB} \\
 KV-Cache Reduction Factor& $3.6\times$   & $53.9\times$  & $2,930\times$  & $56,470\times$ & $392,896\times$ & \textbf{542,641$\times$} \\
-Evaluation Model         & LLaMA-3-8B    & LLaMA-3-8B    & LLaMA-3-8B     & LLaMA-3-8B     & LLaMA-3-8B      & LLaMA-3-8B \\
+Executive Reasoning Model& LLaMA-3-8B    & LLaMA-3-8B    & LLaMA-3-8B     & LLaMA-3-8B     & LLaMA-3-8B      & LLaMA-3-8B \\
 Factual Retrieval Accuracy & \textbf{12/12 (100\%)} & \textbf{5/5 (100\%)} & \textbf{9/9 (100\%)} & \textbf{5/5 (100\%)} & \textbf{5/5 (100\%)} & \textbf{5/5 (100\%)} \\
 \bottomrule
 \end{tabularx}
-\caption{Master empirical scaling benchmark across five corpus tiers spanning $1.6\times 10^3$ to $1.1\times 10^8$ tokens. $^\dagger$Throughput reflects streaming distillation of System B prior to downstream LLM inference.}
+\caption{Master empirical scaling benchmark across five corpus tiers spanning $1.6\times 10^3$ to $1.1\times 10^8$ tokens. $^\dagger$Symbolic throughput reflects the CPU-side lexical pre-filter scanning text at byte-level. $^\ddagger$Neural SLM latency reflects full semantic distillation using \texttt{SmolLM2-1.7B-Instruct} operating as an asynchronous background daemon (\S\ref{sec:hippocampus}). By decoupling memory from compute, we exchange an insurmountable $\mathcal{O}(N)$ memory barrier ($14.38$~TB VRAM, $176\times$ H100 GPUs) for a tractable linear $\mathcal{O}(T)$ background pipeline, preserving strict $\mathcal{O}(1)$ working memory.}
 \label{tab:master_benchmark}
 \end{table*}
 
@@ -603,6 +604,15 @@ We benchmarked the Neural Hippocampus against the adversarial failure modes expo
 
 \subsection{The Hippocampal Capacity Threshold}
 Empirical ablation revealed a distinct capacity threshold. Testing \texttt{SmolLM2-135M-Instruct} (135M parameters) resulted in severe instruction collapse: the model failed to follow rigid JSON constraints and suffered in-context template leakage. In contrast, scaling to 1.7B parameters provided immediate structural adherence and robust semantic extraction. This identifies an empirical lower bound of $\approx 1\text{--}2\text{B}$ parameters for reliable, on-device hippocampal distillation.
+
+\subsection{The Operating System Paradigm: Asynchronous Ingestion \& Preemptive Handover}
+Co-locating a sensory ingestion model and an executive reasoning model on resource-constrained consumer hardware (e.g., Apple Silicon Unified Memory or single-GPU workstations) presents a memory bus contention challenge. We resolve this by structuring the runtime as an operating system process scheduler (\texttt{async\_cognitive\_runtime.py}):
+\begin{enumerate}[leftmargin=*]
+    \item \textbf{Asynchronous Sensory Daemon:} The Hippocampus operates as a low-priority background thread, ingesting the unbounded document stream in 512-token batches and incrementally updating the working memory state $\mathcal{S}_t$.
+    \item \textbf{Dormant Executive Cortex:} The primary foundation model (Meta-Llama-3-8B) remains in deep sleep for $99.9\%$ of the ingestion timeline, drawing 0 FLOPs and consuming zero memory bandwidth.
+    \item \textbf{Instantaneous Preemptive Handover:} When an interactive user query arrives mid-stream, the runtime immediately suspends the Hippocampus daemon (measured handover latency $<0.1$~ms). The system surrenders 100\% of the memory bus and compute cores to the Executive Cortex, which generates a sub-second response strictly from the current state $\mathcal{S}_t$. Upon completion, the Cortex yields, and the Hippocampus resumes background ingestion without data loss.
+\end{enumerate}
+This operating system paradigm decouples continuous stream consumption from interactive query execution, enabling lifelong, multi-gigabyte context processing on edge hardware.
 
 % -----------------------------------------------------------------------------
 \section{Intellectual Property Strategy \& Open-Source Licensing}

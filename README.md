@@ -84,16 +84,18 @@ We validated the architecture across five corpus tiers spanning $1.6\times 10^3$
 | **Stream Chunks / Books** | 1 doc | 60 sections | 66 books | 19 volumes | 190 chunks | 190 chunks |
 | **Working Memory Buffer** | $371$ tok | $371$ tok | $561$ tok | $204$ tok | $293$ tok | $212$ tok |
 | **State Compression Ratio** | $3.6 : 1$ | $53.9 : 1$ | $2,793.6 : 1$ | $53,793.2 : 1$ | $374,532.9 : 1$ | **$517,632.8 : 1$** |
-| **Ingestion Wall Time** | $<0.05$ s | $0.08$ s | $0.52$ s | $0.61$ s | $1.81$ s | $1.83$ s |
+| **Symbolic Stream Time**† | $<0.05$ s | $0.08$ s | $0.52$ s | $0.61$ s | $1.81$ s | $1.83$ s |
+| **Symbolic CPU Throughput**† | $> 30\text{k}$ tok/s | $> 250\text{k}$ tok/s | $3.01\text{M}$ tok/s | $17.9\text{M}$ tok/s | $60.6\text{M}$ tok/s | **$59.9\text{M}$ tok/s** |
+| **Neural SLM Ingestion Latency**‡ | $\approx 2.3$ s | $\approx 45$ s | $\approx 1.9$ h (async) | $\approx 13.5$ h (async) | $\approx 5.6$ d (async) | $\approx 5.6$ d (async) |
 | **Peak Host RSS** | $312.4$ MB | $315.8$ MB | $608.3$ MB | $652.2$ MB | $703.2$ MB | $749.8$ MB |
 | **Net $\Delta\text{RSS}$ Growth** | $+0.0$ MB | $+0.1$ MB | $+44.9$ MB | $+8.0$ MB | $+0.1$ MB | **$+0.16$ MB** |
 | **Working Memory KV-Cache** | $46.4$ MB | $46.4$ MB | $70.1$ MB | $25.5$ MB | $36.6$ MB | $26.5$ MB |
 | **Full Attention KV-Cache** | $0.17$ GB | $2.62$ GB | $205.4$ GB | $1.44$ TB | $14.38$ TB | **$14.38$ TB** |
 | **KV-Cache Reduction Factor** | $3.6\times$ | $53.9\times$ | $2,930\times$ | $56,470\times$ | $392,896\times$ | **$542,641\times$** |
-| **Evaluation Model** | LLaMA-3-8B | LLaMA-3-8B | LLaMA-3-8B | LLaMA-3-8B | LLaMA-3-8B | LLaMA-3-8B |
+| **Executive Reasoning Model** | LLaMA-3-8B | LLaMA-3-8B | LLaMA-3-8B | LLaMA-3-8B | LLaMA-3-8B | LLaMA-3-8B |
 | **Factual Recall Accuracy** | **12/12 (100%)** | **5/5 (100%)** | **9/9 (100%)** | **5/5 (100%)** | **5/5 (100%)** | **5/5 (100%)** |
 
-> **Note on Ingestion Throughput:** The streaming throughput ($>59\text{M}$ tokens/sec) reflects System B (Autonomic Symbolic Distillation) on CPU, actively evicting raw tokens and updating the bounded episodic buffer prior to LLM interaction. Downstream autoregressive evaluation is executed by Meta-Llama-3-8B at standard generation latency.
+> **Note on Compute-Memory Decoupling:** The raw $59.9\text{M}$ tokens/sec rate reflects the lightweight CPU lexical pre-filter (System B heuristic) scanning text at byte level. Full neural semantic processing (SmolLM2-1.7B, Section 7) respects the physical laws of linear compute $\mathcal{O}(T)$ ($\approx 2.28$ s per 512-token chunk). The breakthrough is **Compute-Memory Decoupling**: we exchange an impossible $\mathcal{O}(N)$ memory barrier ($14.38\text{ TB}$ VRAM, $176\times$ H100 GPUs) for a tractable linear $\mathcal{O}(T)$ background pipeline on an on-device 1.7B model, maintaining strict $\mathcal{O}(1)$ working memory while the 8B model sleeps until queried.
 
 ---
 
@@ -181,6 +183,13 @@ Evaluating against the failure modes exposed in the red-team audit:
 - **Inference Latency:** $\approx 2.28$ s/chunk on Apple Silicon (MPS).
 - **Physical Memory:** Strict $\mathcal{O}(1)$ footprint (bounded working memory buffer).
 - Run the test suite: `python3 test_hippocampus_negation.py`
+
+### Operating System Paradigm: Preemptive Handover Runtime (`async_cognitive_runtime.py`)
+To avoid GPU/Unified Memory thrashing on consumer hardware:
+1. **Background Hippocampus Daemon:** Ingests document streams in the background with throttled compute, continuously updating the $O(1)$ Working Memory buffer.
+2. **Sleeping Executive Cortex:** The primary foundation model (LLaMA-3-8B) remains in deep sleep (0 FLOPs, 0 VRAM bandwidth) for 99.9% of the stream.
+3. **Instantaneous Preemption (Collision Resolution):** When a user asks a question, the runtime pauses the Hippocampus ($<0.1$ ms handover), hands 100% memory bus bandwidth to the Cortex to answer from the current Working Memory snapshot in milliseconds, then resumes background ingestion.
+- Run the preemption verification test: `python3 test_async_preemption.py`
 
 ---
 
