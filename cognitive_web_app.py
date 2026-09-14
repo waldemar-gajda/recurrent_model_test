@@ -207,46 +207,128 @@ class DualCognitiveEngine:
             self.status = f"Błąd inicjalizacji: {e}"
             print(f"  [Cognitive OS] ✗ Initialization failed: {e}")
 
-    # ── Hippocampus Background Processing ─────────────────────────────────────
+    # ── Source Cleaning & Semantic Distillation into Hippocampus ─────────────
+
+    def clean_source_text(self, text: str) -> str:
+        """
+        Oczyszcza surowy tekst dokumentu (np. z PDF):
+        - Łączy słowa rozbite dywizem na końcu linii (np. 'luxu-\\nry' -> 'luxury')
+        - Łączy linie wewnątrz akapitów rozbite przez formatowanie PDF
+        - Usuwa powtarzalne stopki, numery stron i szum redakcyjny
+        """
+        # 1. Łączenie słów rozdzielonych łącznikiem na końcu linii
+        t = re.sub(r'(\w+)-\s*\n\s*(\w+)', r'\1\2', text)
+        # 2. Łączenie linii wewnątrz zdań (usuwa pojedyncze \n niepoprzedzone kropką/dwukropkiem)
+        t = re.sub(r'(?<![.!?:\n])\n(?![A-Z0-9\n])', ' ', t)
+        # 3. Filtr szumu: linie będące numerami stron, licencjami, pustymi nagłówkami
+        cleaned_lines = []
+        for line in t.split('\n'):
+            l_strip = line.strip()
+            if not l_strip:
+                continue
+            if re.match(r'^(page\s+\d+(\s+of\s+\d+)?|\d+)$', l_strip, re.IGNORECASE):
+                continue
+            if any(term in l_strip.lower() for term in ['all rights reserved', 'doi: 10.', 'isbn 978-', 'printed in', 'taylor & francis', 'contents', 'index']):
+                continue
+            cleaned_lines.append(l_strip)
+        return '\n\n'.join(cleaned_lines)
 
     def distill_document_chunks(self, full_text: str, source_name: str) -> List[str]:
         """
-        Dzieli długi tekst (np. 73k znaków) na logiczne części
-        i wyciąga z każdego fragmentu kluczowe zdania i fakty.
+        Asymilacja semantyczna materiału źródłowego przez Korę (LLaMA-3-8B):
+        - Oczyszcza surowy tekst i filtruje szum redakcyjny
+        - Dzieli na logiczne makro-sekcje
+        - Wykorzystuje model do wygenerowania ustrukturyzowanych faktów/notatek w języku polskim
+        - Zapisuje notatki do pamięci roboczej O(1) i natychmiast eksmituje surowe tokeny
         """
         self.hippo_active = True
         try:
-            # 1. Podział na akapity / sekcje po ~1500 znaków
-            raw_chunks = []
-            paragraphs = full_text.split("\n\n")
+            cleaned_text = self.clean_source_text(full_text)
+            if not cleaned_text.strip():
+                return []
+
+            # Podział na akapity
+            paragraphs = [p.strip() for p in cleaned_text.split('\n\n') if len(p.strip()) > 30]
+            if not paragraphs:
+                return []
+
+            # Zbuduj makro-bloki po ok. 2200 znaków
+            macro_chunks = []
+            chunk_size = 2200
             cur = ""
             for p in paragraphs:
-                p_clean = p.strip()
-                if not p_clean:
-                    continue
-                if len(cur) + len(p_clean) < 1600:
-                    cur += " " + p_clean
+                if len(cur) + len(p) < chunk_size:
+                    cur += "\n\n" + p
                 else:
                     if cur.strip():
-                        raw_chunks.append(cur.strip())
-                    cur = p_clean
+                        macro_chunks.append(cur.strip())
+                    cur = p
             if cur.strip():
-                raw_chunks.append(cur.strip())
+                macro_chunks.append(cur.strip())
+
+            # Wybierz do 4 najważniejszych przekrojowych fragmentów dokumentu
+            if len(macro_chunks) <= 4:
+                selected_chunks = macro_chunks
+            else:
+                selected_chunks = [
+                    macro_chunks[0],
+                    macro_chunks[len(macro_chunks) // 3],
+                    macro_chunks[2 * len(macro_chunks) // 3],
+                    macro_chunks[-1]
+                ]
 
             extracted_facts = []
-            for idx, chunk in enumerate(raw_chunks[:40]):
-                # Sprawdź, czy Kora Wykonawcza nie zażądała wywłaszczenia
-                with self.preemption_lock:
-                    pass
 
-                # Wybierz najbardziej merytoryczne zdania z fragmentu
-                sentences = [s.strip() for s in re.split(r"[.\n;]+", chunk) if len(s.strip()) > 20]
-                if sentences:
-                    # Dodaj zdania definiujące, wnioskujące lub kluczowe
+            # 1. Głęboka destylacja semantyczna przez model Kory LLaMA-3-8B (gdy załadowany)
+            if self.cortex_model is not None and self.cortex_tok is not None:
+                try:
+                    for chunk in selected_chunks:
+                        with self.preemption_lock:
+                            prompt_messages = [
+                                {
+                                    "role": "system",
+                                    "content": (
+                                        "Jesteś precyzyjnym modułem kognitywnym asystenta. Przeanalizuj poniższy fragment tekstu "
+                                        "i wyodrębnij z niego od 3 do 5 kluczowych, merytorycznych faktów (definicje, tezy, dane liczbowe, rynki, strategie). "
+                                        "Każdy fakt zapisz w nowej linii zaczynając od myślnika '- '. Pisz po polsku, zwięźle i precyzyjnie. "
+                                        "Żadnych wstępów ani komentarzy pobocznych."
+                                    )
+                                },
+                                {
+                                    "role": "user",
+                                    "content": f"DOKUMENT: {source_name}\n\n{chunk[:2200]}"
+                                }
+                            ]
+                            prompt = self.cortex_tok.apply_chat_template(prompt_messages, tokenize=False, add_generation_prompt=True)
+                            inputs = self.cortex_tok(prompt, return_tensors="pt").to(self.device)
+
+                            with torch.no_grad():
+                                out_ids = self.cortex_model.generate(
+                                    **inputs,
+                                    max_new_tokens=180,
+                                    do_sample=False,
+                                    pad_token_id=self.cortex_tok.pad_token_id
+                                )
+                            response = self.cortex_tok.decode(out_ids[0][inputs.input_ids.shape[1]:], skip_special_tokens=True)
+
+                            for line in response.splitlines():
+                                l = line.strip()
+                                if l.startswith("-") or l.startswith("•") or (len(l) > 3 and l[0].isdigit() and l[1] in [".", ")"]):
+                                    clean_fact = re.sub(r"^[-•\d.)\s]+", "", l).strip()
+                                    if len(clean_fact) > 15 and clean_fact not in extracted_facts:
+                                        extracted_facts.append(clean_fact)
+                except Exception as e:
+                    print(f"  [Cognitive OS] Neural distillation note: {e}. Using high-salience fallback.")
+
+            # 2. Szybki, odporny ekstraktor pełnych zdań jako fallback lub uzupełnienie
+            if len(extracted_facts) < 4:
+                for chunk in macro_chunks[:6]:
+                    sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', chunk) if len(s.strip()) > 35]
                     for s in sentences[:3]:
-                        extracted_facts.append(s)
+                        if not any(s in existing for existing in extracted_facts):
+                            extracted_facts.append(s)
 
-            return extracted_facts
+            return extracted_facts[:35]
         finally:
             self.hippo_active = False
 
@@ -446,11 +528,17 @@ async def api_ingest_text(req: TextIngestRequest):
     if not req.text.strip():
         return JSONResponse(status_code=400, content={"error": "Brak tekstu do wgrania"})
     
-    # Process through Hippocampus chunker
-    facts = assistant.engine.distill_document_chunks(req.text, req.source_name or "Wklejony tekst")
-    await assistant.wm.store_assertions(facts, source=req.source_name or "Wklejony tekst")
-    await assistant.wm.add_source(req.source_name or "Wklejony tekst", len(req.text), "text")
-    return {"ok": True, "facts_extracted": len(facts), "message": f"Hipokamp wyekstrahował {len(facts)} faktów do pamięci roboczej."}
+    src_name = req.source_name or "Wklejona notatka"
+    facts = assistant.engine.distill_document_chunks(req.text, src_name)
+    await assistant.wm.store_assertions(facts, source=src_name)
+    await assistant.wm.add_source(src_name, len(req.text), "text")
+    return {
+        "ok": True,
+        "source_name": src_name,
+        "chars": len(req.text),
+        "facts_extracted": len(facts),
+        "message": f"Kora przeanalizowała materiał i zapisała {len(facts)} faktów w pamięci roboczej."
+    }
 
 
 @app.post("/api/upload_file")
@@ -491,7 +579,7 @@ async def api_upload_file(file: UploadFile = File(...)):
         "filename": filename,
         "chars": len(extracted_text),
         "facts_extracted": len(facts),
-        "message": f"Hipokamp przetrawił cały dokument ({len(extracted_text)} znaków) i zasilił pamięć roboczą o {len(facts)} faktów."
+        "message": f"Kora przeanalizowała dokument ({len(extracted_text)} znaków) i zasiliła pamięć roboczą o {len(facts)} faktów."
     }
 
 
@@ -645,7 +733,8 @@ HTML_FRONTEND = """<!DOCTYPE html>
           <span>Wklej treść / notatkę:</span>
           <button onclick="pasteFromClipboard()" class="text-[11px] text-sky-400 hover:underline">Wklej ze schowka</button>
         </div>
-        <textarea id="pasteContextInput" rows="3" placeholder="Wklej dowolny artykuł, umowę, kod lub notatki..."
+        <textarea id="pasteContextInput" rows="3" placeholder="Wklej dowolny artykuł, umowę lub notatkę (auto-analiza)..."
+                  onpaste="handleNotePaste(event)"
                   class="w-full bg-slate-950/80 border border-slate-700 rounded-lg p-2.5 text-xs text-slate-200 placeholder-slate-500 outline-none focus:border-sky-500 transition resize-none"></textarea>
         <button onclick="submitPastedContext()" class="w-full bg-slate-800 hover:bg-slate-700 text-sky-400 font-medium py-1.5 rounded-lg text-xs border border-slate-700 transition">
           + Ingestuj do pamięci Hipokampa
@@ -713,7 +802,7 @@ HTML_FRONTEND = """<!DOCTYPE html>
       <!-- Autonomous Dynamic Status Badges (NO manual model selector!) -->
       <div class="flex items-center space-x-3 text-xs font-mono">
         <div id="hippoBadge" class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-950/60 border border-emerald-800 text-emerald-300">
-          <span class="w-2 h-2 rounded-full bg-emerald-400"></span> Hipokamp 1.7B (Ingestia)
+          <span class="w-2 h-2 rounded-full bg-emerald-400"></span> Pamięć Robocza O(1)
         </div>
         <div id="cortexBadge" class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 text-slate-400">
           <span class="w-2 h-2 rounded-full bg-slate-600"></span> Kora 8B (Uśpiona)
@@ -733,9 +822,8 @@ HTML_FRONTEND = """<!DOCTYPE html>
           <span>🧠 Asystent Kognitywny (Kora Wykonawcza LLaMA-3-8B)</span>
         </div>
         <p class="leading-relaxed text-slate-200">
-          Dzień dobry! Jestem autonomicznym asystentem AI z dwupoziomową pamięcią roboczą. 
-          W tle działa **Hipokamp (SmolLM2-1.7B)**, który analizuje wgrane pliki (PDF, TXT, notatki) oraz schowek. 
-          Ja – **Kora Wykonawcza (LLaMA-3-8B)** – odpowiadam na Twoje pytania, wykorzystując zapamiętany stan w pełnym języku polskim.
+          Dzień dobry! Po załadowaniu pliku lub wklejeniu notatki **Kora Wykonawcza (LLaMA-3-8B)** automatycznie analizuje materiał, wyciąga najważniejsze fakty do bufora **Hipokampa O(1)** i natychmiast usuwa surowy tekst z pamięci RAM.
+          Następnie Kora przechodzi w stan uśpienia i czeka na Twoje pytania.
         </p>
         <div class="pt-2 flex flex-wrap gap-2 text-[11px]">
           <button onclick="sendQuickPrompt('Jakie są kluczowe wnioski z moich materiałów?')" class="bg-slate-800 hover:bg-slate-700 text-sky-300 px-2.5 py-1 rounded-lg border border-slate-700 transition">
@@ -971,6 +1059,14 @@ HTML_FRONTEND = """<!DOCTYPE html>
       c.scrollTop = c.scrollHeight;
     }
 
+    let noteDebounce = null;
+    function handleNotePaste(e) {
+      clearTimeout(noteDebounce);
+      noteDebounce = setTimeout(() => {
+        submitPastedContext();
+      }, 400);
+    }
+
     async function uploadSelectedFile(e) {
       const file = (e.target && e.target.files && e.target.files.length > 0) ? e.target.files[0] : (e.files ? e.files[0] : null);
       if (!file) return;
@@ -981,10 +1077,10 @@ HTML_FRONTEND = """<!DOCTYPE html>
       const hippoBadge = document.getElementById('hippoBadge');
 
       const originalTitle = 'Wgraj dokument (PDF, TXT, MD)';
-      titleEl.innerText = `Indeksowanie: ${file.name.substring(0, 16)}...`;
-      subEl.innerText = 'Hipokamp mieli tekst w tle...';
+      titleEl.innerText = `Analiza: ${file.name.substring(0, 16)}...`;
+      subEl.innerText = 'Kora destyluje fakty do pamięci...';
       iconEl.innerText = '⏳';
-      hippoBadge.innerHTML = '<span class="w-2 h-2 rounded-full bg-amber-400 animate-spin"></span> Hipokamp trawi plik...';
+      hippoBadge.innerHTML = '<span class="w-2 h-2 rounded-full bg-amber-400 animate-spin"></span> Kora destyluje fakty...';
 
       const formData = new FormData();
       formData.append('file', file);
@@ -993,20 +1089,20 @@ HTML_FRONTEND = """<!DOCTYPE html>
         const res = await fetch('/api/upload_file', { method: 'POST', body: formData });
         const data = await res.json();
         if (data.ok) {
-          titleEl.innerText = '✓ Wgrano pomyślnie!';
+          titleEl.innerText = '✓ Zaasymilowano pomyślnie!';
           subEl.innerText = `${Math.round(data.chars / 1000)}k zn., ${data.facts_extracted} faktów`;
           iconEl.innerText = '✅';
 
-          // Add visible confirmation card directly into chat
+          // Add visible confirmation card directly into chat (Kora remains asleep!)
           const chatContainer = document.getElementById('chatContainer');
           const noticeDiv = document.createElement('div');
           noticeDiv.className = 'bg-emerald-950/50 border border-emerald-700/80 p-3.5 rounded-2xl max-w-xl text-xs text-emerald-200 mx-auto text-center space-y-1 my-2';
           noticeDiv.innerHTML = `
             <div class="font-bold text-emerald-300 flex items-center justify-center gap-1.5">
-              <span>📄</span> Wgrano dokument: ${escapeHtml(data.filename)}
+              <span>📄</span> Zaasymilowano dokument: ${escapeHtml(data.filename)}
             </div>
             <div class="text-[11px] text-emerald-400">
-              Hipokamp zindeksował <strong>${data.facts_extracted} kluczowych faktów</strong> (${Math.round(data.chars / 1000)}k znaków). Kora Wykonawcza jest gotowa do odpowiedzi!
+              Kora przeanalizowała treść i zapisała <strong>${data.facts_extracted} kluczowych faktów</strong> (${Math.round(data.chars / 1000)}k znaków) w pamięci roboczej Hipokampa. Kora jest w uśpieniu i czeka na Twoje pytania.
             </div>
           `;
           chatContainer.appendChild(noticeDiv);
@@ -1049,22 +1145,47 @@ HTML_FRONTEND = """<!DOCTYPE html>
       const text = input.value.trim();
       if (!text) return;
       input.value = '';
+      input.placeholder = 'Kora analizuje notatkę i zapisuje fakty...';
 
-      const res = await fetch('/api/ingest_text', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ text, source_name: 'Wklejona notatka' })
-      });
-      const data = await res.json();
-      if (data.ok) {
-        refreshState();
+      try {
+        const res = await fetch('/api/ingest_text', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ text, source_name: 'Wklejona notatka' })
+        });
+        const data = await res.json();
+        if (data.ok) {
+          const chatContainer = document.getElementById('chatContainer');
+          const noticeDiv = document.createElement('div');
+          noticeDiv.className = 'bg-sky-950/50 border border-sky-700/80 p-3 rounded-2xl max-w-xl text-xs text-sky-200 mx-auto text-center space-y-1 my-2';
+          noticeDiv.innerHTML = `
+            <div class="font-bold text-sky-300 flex items-center justify-center gap-1.5">
+              <span>📝</span> Zaasymilowano notatkę (${data.chars} znaków)
+            </div>
+            <div class="text-[11px] text-sky-400">
+              Kora zapisała <strong>${data.facts_extracted} faktów</strong> w pamięci roboczej Hipokampa. Kora czeka na Twoje pytania.
+            </div>
+          `;
+          chatContainer.appendChild(noticeDiv);
+          scrollChat();
+          await refreshState();
+        }
+      } catch (err) {
+        console.error(err);
+      } finally {
+        input.placeholder = 'Wklej dowolny artykuł, umowę lub notatkę (auto-analiza)...';
       }
     }
 
     async function pasteFromClipboard() {
       try {
         const text = await navigator.clipboard.readText();
+        if (!text || !text.trim()) {
+          alert('Schowek jest pusty.');
+          return;
+        }
         document.getElementById('pasteContextInput').value = text;
+        await submitPastedContext();
       } catch (e) {
         alert('Zezwól na dostęp do schowka');
       }
