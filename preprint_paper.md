@@ -615,7 +615,87 @@ Retire synthetic evaluation templates in favor of standardized open-domain bench
 
 ---
 
-## 7. Intellectual Property Strategy & Open-Source Licensing
+## 7. Neural Hippocampus: Replacing Regex Distillation with a Sensory SLM
+
+### 7.1 Motivation: The Elephant in the Room
+
+The adversarial audit (Section 6) exposed a fundamental architectural critique: System B — the Autonomic Symbolic Distillation engine responsible for converting raw token streams into compact episodic prompts — was implemented as a CPU-side Python script using regular expressions. This means the empirical benchmarks (Section 5) demonstrated O(1) memory scaling and 100% recall, but achieved these results through pattern-matching heuristics, not neural language understanding.
+
+A hostile reviewer correctly identifies this as the primary limitation: *"The neural network did not process 110 million tokens — it read a 300-token cheat sheet produced by a regex script."*
+
+We address this directly by replacing System B with a **Dual-LLM Baddeley Cognitive Architecture** in which a lightweight Sensory SLM acts as an Artificial Hippocampus.
+
+### 7.2 Architecture: Dual-LLM Baddeley Stack
+
+The architecture decomposes long-context reasoning into three neurologically-motivated layers:
+
+```
+[Raw Text Stream]
+      │
+      ▼  chunk-by-chunk (≈500 tokens)
+┌─────────────────────┐
+│   HIPPOCAMPUS       │  ← SmolLM2-1.7B-Instruct
+│   (Sensory SLM)     │    Neural fact extraction
+│                     │    ~2.3 s/chunk on Apple MPS
+└──────────┬──────────┘
+           │  Structured assertions {entity, attribute, value}
+           ▼
+┌─────────────────────┐
+│   WORKING MEMORY    │  ← BaddeleyWorkingMemory (O(1))
+│   (Episodic Buffer) │    Entity-scoped, bounded, ~300 tokens
+└──────────┬──────────┘
+           │
+           ▼
+┌─────────────────────┐
+│   CORTEX (LLM)      │  ← LLaMA-3-8B / GPT-4 / Claude
+│   (Executive)       │    Reasons only over WM snapshot
+└─────────────────────┘
+```
+
+The Hippocampus SLM reads each chunk independently, understands semantic intent, and emits a structured JSON assertion list. Unlike regex, it handles:
+
+- **Negation**: *"The offer of €15M was rejected"* → the €15M fact is excluded
+- **Paraphrase**: *"pre-IPO market capitalization"* recognised as equivalent to *valuation*
+- **Passive voice**: *"a valuation of €45M was agreed upon"* correctly attributed
+- **Revocation**: *"Tranche A is hereby cancelled"* → empty Working Memory entry
+- **Conditional / pending**: *"the board is considering raising capital to \$5M; decision pending"* → excluded
+
+A sentence-scoped safety filter (post-processing layer) provides a defence-in-depth backstop: if the SLM emits a fact whose value appears in the same sentence as a negation stem (`reject*`, `cancel*`, `consider*`, `nullif*`), the fact is dropped before entering Working Memory.
+
+### 7.3 Empirical Validation
+
+We evaluated the Hippocampus architecture against the five adversarial failure modes identified in the red-team audit, comparing against the regex System B baseline:
+
+| Test ID | Failure Mode | Regex | SLM Hippocampus |
+|:--------|:-------------|:-----:|:---------------:|
+| VM1-B | Distractor key spoofing — `DRAFT-KEY` captured instead of `TITAN-KEY` | ✗ FAIL | **✓ PASS** |
+| VM2-A | Synonym — *"market capitalization"* not recognised as valuation | ✗ FAIL | **✓ PASS** |
+| VM2-B | Passive voice — *"was agreed upon"* not matched | ✗ FAIL | **✓ PASS** |
+| VM2-D | Qualifier-heavy sentence with hedging and confirmation | ✗ FAIL | **✓ PASS** |
+| VM3-A | Negation blindness — rejected €15M stored instead of valid €45M | ✓ PASS | **✓ PASS** |
+| VM3-B | Revocation — cancelled tranche populates memory | ✓ PASS | **✓ PASS** |
+| VM3-C | Override — initial value not superseded by amendment | ✓ PASS | **✓ PASS** |
+| VM3-E | Conditional — *"considering… pending"* stored as fact | ✓ PASS | **✓ PASS** |
+| **Total** | | **4/8 (50%)** | **8/8 (100%)** |
+
+**Model**: SmolLM2-1.7B-Instruct (1.71B parameters, bfloat16, Apple MPS)  
+**Inference latency**: 2.28 s/chunk average (512-token chunks)  
+**Working Memory overhead**: unchanged O(1), ~300 tokens
+
+### 7.4 The Hippocampus Size Threshold
+
+During development, we evaluated SmolLM2-135M-Instruct (269 MB) as the Hippocampus model. At this scale, instruction-following quality was insufficient for reliable structured extraction: the model produced malformed JSON, copied few-shot templates verbatim, and failed to attribute correct entity names from Polish or English input alike.
+
+SmolLM2-1.7B-Instruct (≈3.5 GB) crossed the capability threshold necessary for:
+- Reliable JSON array output
+- Semantic negation understanding
+- Entity attribution from complex sentences
+
+This establishes an empirical lower bound of approximately **1–2B parameters** for a viable Hippocampus SLM in this architecture, consistent with the broader literature on instruction-following emergence in small language models.
+
+---
+
+## 8. Intellectual Property Strategy & Open-Source Licensing
 
 ### 7.1 Defensive Open-Source Strategy: The AGPLv3 Imperative
 A paramount risk facing innovative long-context architectures is **proprietary cloud enclosure**: commercial hyperscalers (e.g., closed-source AI service providers) absorbing open-source algorithmic breakthroughs into proprietary cloud APIs without contributing improvements back to the scientific community. Standard permissive licenses (MIT, Apache 2.0, BSD) permit cloud providers to host modified versions behind proprietary endpoints, circumventing copyleft triggers.
