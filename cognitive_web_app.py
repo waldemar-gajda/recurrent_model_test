@@ -629,11 +629,11 @@ HTML_FRONTEND = """<!DOCTYPE html>
     <div class="p-4 space-y-4 flex-1 overflow-y-auto">
       
       <!-- Upload File Zone -->
+      <input type="file" id="fileInput" class="hidden" onchange="uploadSelectedFile(event)" onclick="this.value=''" accept=".pdf,.txt,.md,.json,.py,.csv,.log" />
       <label for="fileInput" id="uploadDropzone" class="block border-2 border-dashed border-slate-700 hover:border-sky-500 rounded-xl p-4 text-center cursor-pointer transition bg-slate-800/40"
            ondragover="event.preventDefault(); this.classList.add('border-sky-400');"
            ondragleave="this.classList.remove('border-sky-400');"
            ondrop="handleFileDrop(event)">
-        <input type="file" id="fileInput" class="hidden" onchange="uploadSelectedFile(event)" onclick="this.value=''" accept=".pdf,.txt,.md,.json,.py,.csv,.log" />
         <div id="uploadIcon" class="text-2xl mb-1">📄</div>
         <div id="uploadTitle" class="text-xs font-medium text-slate-200">Wgraj dokument (PDF, TXT, MD)</div>
         <div id="uploadSubtitle" class="text-[11px] text-slate-400 mt-1">Kliknij tutaj lub upuść plik</div>
@@ -886,11 +886,27 @@ HTML_FRONTEND = """<!DOCTYPE html>
           alert('Brak faktów w pamięci do skopiowania.');
           return;
         }
-        const text = data.memory.assertions.map((a, i) => `${i + 1}. [${a.source}] ${a.text}`).join('\n\n');
-        await navigator.clipboard.writeText(text);
+        const text = data.memory.assertions.map((a, i) => `${i + 1}. [${a.source}] ${a.text}`).join('\\n\\n');
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          try {
+            await navigator.clipboard.writeText(text);
+            alert(`✓ Skopiowano ${data.memory.assertions.length} faktów do schowka!`);
+            return;
+          } catch (clipErr) {
+            // fallback below
+          }
+        }
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        textArea.style.position = 'fixed';
+        textArea.style.opacity = '0';
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
         alert(`✓ Skopiowano ${data.memory.assertions.length} faktów do schowka!`);
       } catch (e) {
-        alert('Zezwól przeglądarce na dostęp do schowka.');
+        alert('Nie udało się skopiować faktów: ' + e);
       }
     }
 
