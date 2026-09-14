@@ -144,18 +144,12 @@ class DualCognitiveEngine:
     - Cortex (LLaMA-3-8B): Dormant until user query, handles 100% of generation.
     """
 
-    def __init__(self, base_dir: Path):
+    def __init__(self, base_dir: Path, model_choice: str = "8b"):
         self.device = "mps" if torch.backends.mps.is_available() else "cpu"
         self.base_dir = base_dir
 
-        # Hippocampus (1.7B)
-        self.hippo_path = "HuggingFaceTB/SmolLM2-1.7B-Instruct"
-        self.hippo_tok = None
-        self.hippo_model = None
-
-        # Cortex (LLaMA-3-8B)
+        # Cortex configuration
         self.cortex_local_path = base_dir / "llama-3-8b-instruct"
-        self.cortex_path = str(self.cortex_local_path) if self.cortex_local_path.exists() else "NousResearch/Meta-Llama-3-8B-Instruct"
         self.cortex_tok = None
         self.cortex_model = None
 
@@ -163,17 +157,35 @@ class DualCognitiveEngine:
         self.preemption_lock = threading.Lock()
         self.is_preempted = False
         self.preemption_count = 0
-        self.status = "Inicjalizacja modeli..."
+        self.status = "Inicjalizacja..."
         self.is_ready = False
         self.loading_in_progress = False
         self.hippo_active = False
 
+        self.configure_model(model_choice)
+
+    def configure_model(self, choice: str):
+        self.model_choice = (choice or "8b").lower().strip()
+        if self.model_choice in ("3b", "llama-3.2-3b", "llama-3.2-3b-instruct"):
+            self.cortex_path = "unsloth/Llama-3.2-3B-Instruct"
+            self.model_label = "Kora 3B"
+            self.model_desc = "Llama-3.2-3B-Instruct (~6 GB RAM, ultra-szybka)"
+        elif self.model_choice in ("1.7b", "smollm2", "smol"):
+            self.cortex_path = "HuggingFaceTB/SmolLM2-1.7B-Instruct"
+            self.model_label = "Kora 1.7B"
+            self.model_desc = "SmolLM2-1.7B-Instruct (~3.5 GB RAM, super-lekka)"
+        else:
+            self.model_choice = "8b"
+            self.cortex_path = str(self.cortex_local_path) if self.cortex_local_path.exists() else "NousResearch/Meta-Llama-3-8B-Instruct"
+            self.model_label = "Kora 8B"
+            self.model_desc = "LLaMA-3-8B-Instruct (15.5 GB RAM, pełna precyzja)"
+
     def initialize_both_models(self):
-        """Wczytuje model Kory Wykonawczej (LLaMA-3-8B) do pamięci operacyjnej."""
+        """Wczytuje model Kory Wykonawczej do pamięci operacyjnej."""
         self.loading_in_progress = True
         try:
-            self.status = "Ładowanie Kory Wykonawczej (LLaMA-3-8B)..."
-            print(f"  [Cognitive OS] Loading Executive Cortex ({self.cortex_path}) on {self.device}...")
+            self.status = f"Ładowanie Kory Wykonawczej ({self.model_label})..."
+            print(f"  [Cognitive OS] Loading Executive Cortex: {self.model_label} ({self.cortex_path}) on {self.device}...")
             self.cortex_tok = AutoTokenizer.from_pretrained(self.cortex_path)
             if self.cortex_tok.pad_token is None:
                 self.cortex_tok.pad_token = self.cortex_tok.eos_token
@@ -185,10 +197,10 @@ class DualCognitiveEngine:
                 low_cpu_mem_usage=True,
             ).to(self.device)
             self.cortex_model.eval()
-            print("  [Cognitive OS] ✓ Executive Cortex loaded.")
+            print(f"  [Cognitive OS] ✓ Executive Cortex loaded ({self.model_label}).")
 
             self.is_ready = True
-            self.status = "System Gotowy (Kora LLaMA-3-8B + Hipokamp O(1))"
+            self.status = f"System Gotowy ({self.model_label} + Hipokamp O(1))"
             print(f"  [Cognitive OS] Cognitive Runtime fully operational on {self.device.upper()}.")
         except Exception as e:
             self.status = f"Błąd inicjalizacji: {e}"
@@ -360,7 +372,7 @@ class DualCognitiveEngine:
                         time.sleep(0.5)
                         wait_sec += 1
                     if not self.is_ready:
-                        yield "Kora Wykonawcza (LLaMA-3-8B) nadal się ładuje do pamięci RAM. Proszę odczekać kilka sekund..."
+                        yield f"Kora Wykonawcza ({self.model_label}) nadal się ładuje do pamięci RAM. Proszę odczekać kilka sekund..."
                         return
 
                 # System prompt w języku polskim z wstrzykniętą pamięcią roboczą
@@ -430,14 +442,17 @@ class DualCognitiveEngine:
 BASE_DIR = Path(__file__).parent
 
 class AssistantApplication:
-    def __init__(self):
+    def __init__(self, model_choice: str = "8b"):
         self.wm = BaddeleyWorkingMemoryStore(max_assertions=80)
-        self.engine = DualCognitiveEngine(base_dir=BASE_DIR)
+        self.engine = DualCognitiveEngine(base_dir=BASE_DIR, model_choice=model_choice)
         self.chat_history: List[Dict[str, str]] = []
         self.clipboard_monitor_active = False
         self.clipboard_thread: Optional[threading.Thread] = None
         self.last_clipboard_text = ""
         self.is_running = True
+
+    def configure_model(self, model_choice: str):
+        self.engine.configure_model(model_choice)
 
     def start(self):
         threading.Thread(target=self.engine.initialize_both_models, daemon=True).start()
@@ -482,6 +497,8 @@ class AssistantApplication:
             "preemption_count": self.engine.preemption_count,
             "hippo_active": self.engine.hippo_active,
             "clipboard_active": self.clipboard_monitor_active,
+            "model_label": self.engine.model_label,
+            "model_desc": self.engine.model_desc,
         }
 
 
@@ -811,7 +828,7 @@ HTML_FRONTEND = """<!DOCTYPE html>
           <span class="w-2 h-2 rounded-full bg-emerald-400"></span> Hipokamp: Pamięć Robocza O(1)
         </div>
         <div id="cortexBadge" class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 text-slate-400">
-          <span class="w-2 h-2 rounded-full bg-slate-600"></span> Kora 8B (Uśpiona)
+          <span class="w-2 h-2 rounded-full bg-slate-600"></span> Kora (Uśpiona)
         </div>
         <button onclick="clearChat()" class="text-slate-400 hover:text-white px-2 py-1 rounded hover:bg-slate-800 transition text-xs font-sans">
           Nowy czat
@@ -825,10 +842,10 @@ HTML_FRONTEND = """<!DOCTYPE html>
       <!-- Welcome Message -->
       <div class="chat-bubble-assistant p-4 rounded-2xl max-w-2xl text-xs space-y-2">
         <div class="font-semibold text-sky-400 flex items-center gap-2">
-          <span>🧠 Asystent Kognitywny (Kora Wykonawcza LLaMA-3-8B)</span>
+          <span>🧠 Asystent Kognitywny (<span id="welcomeModelBadge">Kora</span>)</span>
         </div>
         <p class="leading-relaxed text-slate-200">
-          Dzień dobry! Po załadowaniu pliku lub wklejeniu notatki **Kora Wykonawcza (LLaMA-3-8B)** automatycznie analizuje materiał, wyciąga najważniejsze fakty do bufora **Hipokampa O(1)** i natychmiast usuwa surowy tekst z pamięci RAM.
+          Dzień dobry! Po załadowaniu pliku lub wklejeniu notatki **Kora Wykonawcza** automatycznie analizuje materiał, wyciąga najważniejsze fakty do bufora **Hipokampa O(1)** i natychmiast usuwa surowy tekst z pamięci RAM.
           Następnie Kora przechodzi w stan uśpienia i czeka na Twoje pytania.
         </p>
         <div class="pt-2 flex flex-wrap gap-2 text-[11px]">
@@ -862,7 +879,7 @@ HTML_FRONTEND = """<!DOCTYPE html>
         </div>
       </div>
       <div class="text-[11px] text-center text-slate-500 mt-2">
-        Architektura Baddeleya: Kora (LLaMA-3-8B) asymiluje materiał do pamięci roboczej Hipokampa O(1) i odpowiada z niej na żądanie.
+        Architektura Baddeleya: Kora asymiluje materiał do pamięci roboczej Hipokampa O(1) i odpowiada z niej na żądanie.
       </div>
     </div>
 
@@ -902,33 +919,39 @@ HTML_FRONTEND = """<!DOCTYPE html>
       };
     }
 
+    let currentModelLabel = "Kora";
+    let isCortexRunning = false;
+    let isCortexDistillingState = false;
+
     function setCortexActive(active) {
+      isCortexRunning = active;
       const cBadge = document.getElementById('cortexBadge');
       const hBadge = document.getElementById('hippoBadge');
       if (active) {
         cBadge.className = 'flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-950/80 border border-amber-600 text-amber-300 animate-pulse';
-        cBadge.innerHTML = '<span class="w-2 h-2 rounded-full bg-amber-400"></span> ⚡ Kora 8B (Odpowiada...)';
+        cBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-amber-400"></span> ⚡ ${currentModelLabel} (Odpowiada...)`;
         hBadge.className = 'flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 text-slate-400';
         hBadge.innerHTML = '<span class="w-2 h-2 rounded-full bg-slate-600"></span> Hipokamp: Bufor O(1)';
       } else {
         cBadge.className = 'flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 text-slate-400';
-        cBadge.innerHTML = '<span class="w-2 h-2 rounded-full bg-slate-600"></span> Kora 8B (Uśpiona)';
+        cBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-slate-600"></span> ${currentModelLabel} (Uśpiona)`;
         hBadge.className = 'flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-950/60 border border-emerald-800 text-emerald-300';
         hBadge.innerHTML = '<span class="w-2 h-2 rounded-full bg-emerald-400"></span> Hipokamp: Pamięć Robocza O(1)';
       }
     }
 
     function setCortexDistilling(active) {
+      isCortexDistillingState = active;
       const cBadge = document.getElementById('cortexBadge');
       const hBadge = document.getElementById('hippoBadge');
       if (active) {
         cBadge.className = 'flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-950/80 border border-amber-600 text-amber-300';
-        cBadge.innerHTML = '<span class="w-2 h-2 rounded-full bg-amber-400 animate-spin"></span> Kora 8B (Destyluje wiedzę...)';
+        cBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-amber-400 animate-spin"></span> ${currentModelLabel} (Destyluje wiedzę...)`;
         hBadge.className = 'flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-950/60 border border-emerald-800 text-emerald-300';
         hBadge.innerHTML = '<span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> Hipokamp: Zapisuje fakty...';
       } else {
         cBadge.className = 'flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 text-slate-400';
-        cBadge.innerHTML = '<span class="w-2 h-2 rounded-full bg-slate-600"></span> Kora 8B (Uśpiona)';
+        cBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-slate-600"></span> ${currentModelLabel} (Uśpiona)`;
         hBadge.className = 'flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-950/60 border border-emerald-800 text-emerald-300';
         hBadge.innerHTML = '<span class="w-2 h-2 rounded-full bg-emerald-400"></span> Hipokamp: Pamięć Robocza O(1)';
       }
@@ -938,6 +961,19 @@ HTML_FRONTEND = """<!DOCTYPE html>
       try {
         const res = await fetch('/api/state');
         const data = await res.json();
+
+        // Model label
+        if (data.telemetry && data.telemetry.model_label) {
+          currentModelLabel = data.telemetry.model_label;
+          const welcomeBadge = document.getElementById('welcomeModelBadge');
+          if (welcomeBadge) welcomeBadge.innerText = currentModelLabel;
+          if (!isCortexRunning && !isCortexDistillingState) {
+            const cBadge = document.getElementById('cortexBadge');
+            const isReady = data.telemetry.is_ready;
+            cBadge.className = 'flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 text-slate-400';
+            cBadge.innerHTML = `<span class="w-2 h-2 rounded-full ${isReady ? 'bg-slate-600' : 'bg-amber-400 animate-pulse'}"></span> ${currentModelLabel} (${isReady ? 'Uśpiona' : 'Ładowanie...'})`;
+          }
+        }
 
         // RAM & Device
         document.getElementById('ramUsage').innerText = `RAM: ${data.telemetry.ram_rss_mb} MB`;
@@ -1044,7 +1080,7 @@ HTML_FRONTEND = """<!DOCTYPE html>
       assistantDiv.rawText = '';
       assistantDiv.innerHTML = `
         <div class="font-semibold text-sky-400 text-[11px] mb-1 flex items-center gap-1.5">
-          <span>Kora Wykonawcza (LLaMA-3-8B)</span>
+          <span>${currentModelLabel}</span>
         </div>
         <div class="markdown-content leading-relaxed text-slate-200"></div>
       `;
@@ -1313,10 +1349,22 @@ async def run_headless_tests():
 def main():
     parser = argparse.ArgumentParser(description="Baddeley Cognitive Dual-Model Assistant")
     parser.add_argument("--test", action="store_true", help="Run automated verification suite and exit")
+    parser.add_argument("--model", type=str, default="8b", choices=["8b", "3b", "1.7b"], help="Executive Cortex model: 8b (default), 3b (Llama-3.2-3B), 1.7b (SmolLM2)")
+    parser.add_argument("--3b", dest="use_3b", action="store_true", help="Shortcut for --model 3b (Llama-3.2-3B)")
+    parser.add_argument("--fast", action="store_true", help="Shortcut for fast testing mode (--model 3b)")
+    parser.add_argument("--1.7b", dest="use_17b", action="store_true", help="Shortcut for --model 1.7b (SmolLM2)")
     parser.add_argument("--port", type=int, default=8000, help="Port to serve (default: 8000)")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="Host address (default: 127.0.0.1)")
     parser.add_argument("--no-browser", action="store_true", help="Do not open browser automatically")
     args = parser.parse_args()
+
+    selected_model = args.model
+    if args.use_3b or args.fast:
+        selected_model = "3b"
+    elif args.use_17b:
+        selected_model = "1.7b"
+
+    assistant.configure_model(selected_model)
 
     if args.test:
         asyncio.run(run_headless_tests())
@@ -1334,7 +1382,8 @@ def main():
     print(f"\n=======================================================")
     print(f"  🧠 BADDELEY COGNITIVE DUAL-PROCESS ASSISTANT")
     print(f"  Local Web App: {url}")
-    print(f"  Operating System: Hippocampus (1.7B) + Cortex (LLaMA-3 8B)")
+    print(f"  Executive Cortex: {assistant.engine.model_desc}")
+    print(f"  Working Memory: Hippocampus O(1) Episodic Buffer")
     print(f"=======================================================\n")
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
 
