@@ -133,7 +133,7 @@ python3 benchmark_babi_suite.py
 
 ### 1. Installation
 ```bash
-git clone https://github.com/waldemargajda/recurrent_model_test.git
+git clone https://github.com/waldemar-gajda/recurrent_model_test.git
 cd recurrent_model_test
 pip install -r requirements.txt
 ```
