@@ -48,11 +48,11 @@
 \begin{abstract}
 Autoregressive Large Language Models (LLMs) face fundamental physical limits when scaling to long contexts due to the linear $\mathcal{O}(N)$ memory growth of the causal Key-Value (KV) cache and the quadratic $\mathcal{O}(N^2)$ computational complexity of dense self-attention. For a sequence length of 110 million tokens, the standard bfloat16 KV-cache of an 8-billion parameter model with Grouped Query Attention (Meta-Llama-3-8B) demands approximately $14.04$ to $14.38$ Terabytes of high-bandwidth memory (VRAM)---an infrastructure requirement exceeding 176 enterprise NVIDIA H100 (80GB) GPUs for a single inference stream. Furthermore, unconstrained context expansion induces severe cognitive degradation, including catastrophic attention dilution and the ``lost-in-the-middle'' phenomenon.
 
-In this work, we present a comprehensive formalization, empirical scaling evaluation, and adversarial security audit of an alternative paradigm: \textbf{Baddeley Cognitive Working Memory Architectures}. Grounded in the classical quadripartite working memory model of Baddeley and Hitch (1974, 2000), our architecture replaces unbounded linear history with a strictly bounded recurrent state space $\mathcal{S} = \langle \mathcal{S}_{visuo}, \mathcal{S}_{phon}, \mathcal{S}_{exec}, \mathcal{S}_{ep} \rangle$, comprising a continuous Visuospatial Sketchpad ($K=8$ scene slots, $\approx 32$~KB), a discrete Phonological Loop ($L_{sym} \le 16$ symbol tokens, $32$~bytes), a Central Executive workspace ($P=4$ deliberation tokens), and a multimodal Episodic Buffer ($C \le 28$ tokens). 
+In this work, we present a comprehensive formalization, empirical scaling evaluation, and adversarial evaluation of an alternative paradigm: \textbf{Baddeley Cognitive Working Memory Architectures}. Grounded in the classical quadripartite working memory model of Baddeley and Hitch (1974, 2000), our architecture replaces unbounded linear history with a strictly bounded recurrent state space $\mathcal{S} = \langle \mathcal{S}_{visuo}, \mathcal{S}_{phon}, \mathcal{S}_{exec}, \mathcal{S}_{ep} \rangle$, comprising a continuous Visuospatial Sketchpad ($K=8$ scene slots, $\approx 32$~KB), a discrete Phonological Loop ($L_{sym} \le 16$ symbol tokens, $32$~bytes), a Central Executive workspace ($P=4$ deliberation tokens), and a multimodal Episodic Buffer ($C \le 28$ tokens).
 
-We prove that this architecture guarantees strict $\mathcal{O}(1)$ space complexity and $\mathcal{O}(1)$ per-token decoding latency. Across a five-tier empirical scaling benchmark spanning $1.6\times 10^3 \to 2.0\times 10^4 \to 1.53\times 10^6 \to 1.097\times 10^7 \to 1.097\times 10^8$ tokens, the system achieves 100\% factual recall while maintaining a flat hardware footprint ($\Delta\text{RSS} \le 3.1$~MB across 110 million tokens). We formally document and correct a historical $1,000\times$ unit reporting discrepancy in early literature ($0.08$~GB mislabeled as $0.08$~MB), proving an exact hardware KV-cache reduction factor exceeding $182,900\times$ (from $14.04$~TB down to $78.6$~MB on LLaMA-3-8B, and $32$~KB on tensor-level slot memory banks). 
+We prove that this architecture guarantees strict $\mathcal{O}(1)$ space complexity and $\mathcal{O}(1)$ per-token decoding latency. Across a five-tier proprietary benchmark spanning $1.6\times 10^3 \to 2.0\times 10^4 \to 1.53\times 10^6 \to 1.097\times 10^7 \to 1.097\times 10^8$ tokens, the \textbf{System~B (Neural Hippocampus)} pipeline achieves 100\% factual recall on task-specific retrieval probes ($5$--$12$ questions per tier) while maintaining a flat hardware footprint ($\Delta\text{RSS} \le 3.1$~MB across 110 million tokens). On the standardized Meta~AI \textbf{bAbI} probing suite~\cite{weston2015towards}, the architecture achieves \textbf{60\%} zero-shot accuracy (3/5 tasks), with failure confined to transitive 2-hop relational chaining (Task~2) and partial inventory binding (Task~8)---a known frontier of flat episodic buffers addressed in Section~6.4. We derive an exact hardware KV-cache reduction factor exceeding $182,900\times$ (from $14.04$~TB down to $78.6$~MB for prompt-level distillation on LLaMA-3-8B). Note that while query-time complexity is $\mathcal{O}(1)$, document ingestion scales linearly $\mathcal{O}(T)$: at 110M tokens this represents approximately 5.6 days on consumer Apple Silicon hardware.
 
-Finally, we report an exhaustive zero-trust adversarial red-team audit exposing critical failure modes in heuristic text-distillation prototypes (distractor needle spoofing, syntactic collapse, negation blindness, and out-of-distribution drift), delineate the boundary between symbolic prompt distillation and neural tensor recurrence, and establish five concrete architectural mitigations to guide future research.
+Finally, we report a systematic adversarial evaluation exposing critical failure modes in heuristic text-distillation prototypes (distractor needle spoofing, syntactic collapse, negation blindness, and out-of-distribution drift), delineate the boundary between symbolic prompt distillation (\textbf{System~B}) and neural tensor recurrence (\textbf{System~A}), and establish five concrete architectural mitigations to guide future research.
 \end{abstract}
 
 \vspace{1em}
@@ -130,11 +130,11 @@ Directly mapping Baddeley's framework to artificial neural networks yields the \
 \subsection{Contributions of this Work}
 In this paper, we make five primary contributions:
 \begin{enumerate}
-    \item \textbf{Formal Mathematical Specification:} We formalize the quadripartite cognitive state space $\mathcal{S}$, define its recurrent transition operators across continuous cross-attention slot pooling, conversational consolidation, and symbolic conflict overwrite, and present formal proofs establishing strict $\mathcal{O}(1)$ space complexity and $\mathcal{O}(1)$ per-token generation latency.
-    \item \textbf{Hardware KV-Cache Derivation \& Historical Correction:} We derive the exact hardware scaling equations for Grouped Query Attention under bfloat16 precision, formally document and resolve the $1,000\times$ reporting error in early cognitive literature ($0.08$~GB mislabeled as $0.08$~MB), and present verified physical OS RSS memory traces confirming flat allocation across 110 million tokens.
-    \item \textbf{Master Empirical Scaling Benchmark:} We synthesize empirical performance across five corpus tiers spanning $1.6\times 10^3$ to $1.097\times 10^8$ tokens, verifying 100\% factual recall under continuous token eviction.
-    \item \textbf{Comparative Taxonomy \& Novelty Delineation:} We conduct an exhaustive taxonomy positioning our work against Recurrent Memory Transformers (RMT), Infini-attention, MemGPT/Letta, RWKV, and Mamba, providing a rigorous demarcation between neural slot recurrence and symbolic prompt distillation.
-    \item \textbf{Zero-Trust Adversarial Red-Teaming \& Mitigations:} We present the results of an adversarial vulnerability audit exposing the brittle failure modes of heuristic prototypes (83.3\% distractor spoofing, 84.7\% syntactic collapse, 100\% negation blindness), paired with five concrete architectural mitigations.
+    \item \textbf{Formal Mathematical Specification:} We formalize the quadripartite cognitive state space $\mathcal{S}$, define its recurrent transition operators across continuous cross-attention slot pooling, conversational consolidation, and symbolic conflict overwrite, and present formal proofs establishing strict $\mathcal{O}(1)$ space complexity and $\mathcal{O}(1)$ per-token generation latency. We note that these proofs hold by construction of the bounded buffer; the empirically open question is whether the buffer capacity suffices to preserve task-relevant information as $T \to \infty$.
+    \item \textbf{Hardware KV-Cache Derivation:} We derive the exact hardware scaling equations for Grouped Query Attention under bfloat16 precision and present verified physical OS RSS memory traces confirming flat allocation across 110 million tokens. We document that conflating SI megabytes (MB~$=10^6$ bytes) with binary mebibytes (MiB~$=2^{20}$ bytes) can introduce apparent discrepancies of approximately $1,000\times$ in reported cache sizes; all figures in this work use SI megabytes unless otherwise stated.
+    \item \textbf{Dual-Benchmark Evaluation (Proprietary + Standardized):} We evaluate on two complementary benchmarks: (i) a five-tier proprietary corpus ($1.6\times 10^3$ to $1.097\times 10^8$ tokens) achieving 100\% factual recall on task-specific probes ($5$--$12$ questions per tier); (ii) the standardized Meta~AI bAbI probing suite~\cite{weston2015towards}, achieving 60\% zero-shot accuracy. The gap between these two benchmarks is explicitly analyzed in Section~\ref{sec:hippocampus}.
+    \item \textbf{Comparative Taxonomy \& Novelty Delineation:} We conduct an exhaustive taxonomy positioning our work against Recurrent Memory Transformers (RMT), Infini-attention, MemGPT/Letta, RWKV, and Mamba, and provide a rigorous demarcation between neural slot recurrence (\textbf{System~A}) and symbolic prompt distillation (\textbf{System~B}).
+    \item \textbf{Systematic Adversarial Evaluation \& Mitigations:} We present the results of an adversarial vulnerability evaluation exposing the brittle failure modes of heuristic prototypes (83.3\% distractor spoofing, 84.7\% syntactic collapse, 100\% negation blindness), paired with five concrete architectural mitigations. Source code is available at \url{https://github.com/waldemargajda/recurrent_model_test}.
 \end{enumerate}
 
 % -----------------------------------------------------------------------------
@@ -351,12 +351,8 @@ For \textbf{Meta-Llama-3-8B-Instruct} ($n_{\text{layers}} = 32, n_{\text{kv\_hea
 \text{Bytes per Token} = 2 \times 32 \times 8 \times 128 \times 2 = 131,072 \text{ bytes} = 128 \text{ KiB}
 \end{equation}
 
-\subsection{Formal Correction of the Historical 1,000x Reporting Error}
-In early academic reports on cognitive working memory, a recurring metric claimed:
-\begin{center}
-\textit{``Working Memory KV-Cache: $0.08$~MB vs Full-Context: $14.04$~Terabytes''}
-\end{center}
-Our forensic audit reveals that this claim contains an exact \textbf{$1,000\times$ arithmetic unit reporting error} ($10^3$) that has propagated through derivative citations.
+\subsection{Unit Conventions and KV-Cache Memory Derivation}
+A persistent source of confusion in the long-context literature is the conflation of SI megabytes (MB~$=10^6$~bytes) with binary mebibytes (MiB~$=2^{20}$~bytes), which introduces an apparent discrepancy of approximately $1.049\times$ between the two unit systems. More critically, dividing a byte count by $10^9$ yields gigabytes (GB), not megabytes (MB)---a label swap of $10^3$. To avoid ambiguity, \textbf{this work uses SI megabytes (MB~$=10^6$~bytes)} throughout.
 
 For an episodic working memory text prompt containing $N_{buffer} = 600$ tokens:
 \begin{equation}
@@ -364,24 +360,24 @@ For an episodic working memory text prompt containing $N_{buffer} = 600$ tokens:
 \end{equation}
 Converting $78,643,200$ bytes into standard units:
 \begin{itemize}
-    \item \textbf{Binary Megabytes (MiB):} $\frac{78,643,200}{1,048,576} \approx \mathbf{75.00 \text{ MiB}}$
+    \item \textbf{Binary Mebibytes (MiB):} $\frac{78,643,200}{1,048,576} \approx \mathbf{75.00 \text{ MiB}}$
     \item \textbf{Decimal Megabytes (MB):} $\frac{78,643,200}{1,000,000} \approx \mathbf{78.64 \text{ MB}}$
-    \item \textbf{Decimal Gigabytes (GB):} $\frac{78,643,200}{1,000,000,000} \approx \mathbf{0.07864 \text{ GB}} \approx \mathbf{0.079 \text{ GB}}$
+    \item \textbf{Decimal Gigabytes (GB):} $\frac{78,643,200}{1,000,000,000} \approx \mathbf{0.079 \text{ GB}}$
 \end{itemize}
 
-\paragraph{Forensic Finding:} The original author calculated $78,643,200 / 10^9 \approx 0.08$, but erroneously appended the unit label \textbf{``MB''} instead of \textbf{``GB''}. A simple proof by contradiction exposes the impossibility of $0.08$~MB:
+\paragraph{Note on prior reporting:} Any report stating ``$0.08$~MB'' for a 600-token LLaMA-3-8B buffer is arithmetically inconsistent, since:
 \begin{equation}
-0.08 \text{ MB} = 80,000 \text{ bytes} < 131,072 \text{ bytes (The KV-Cache of ONE single token!)}
+0.08 \text{ MB} = 80,000 \text{ bytes} < 131,072 \text{ bytes (KV footprint of a single token)}
 \end{equation}
-The accurate comparison for a 600-token episodic buffer on LLaMA-3-8B versus a 109,738,160 token full-context stream is:
+The correct SI figure is $78.6$~MB (or equivalently $0.079$~GB). The accurate hardware comparison for a 600-token episodic buffer versus a 109,738,160-token full-context stream is:
 \begin{equation}
-\mathbf{78.6\text{ MB } (0.079\text{ GB})} \quad \text{vs} \quad \mathbf{14.04\text{ TB (decimal) } / \ 14.38\text{ TB (binary)}}
+\mathbf{78.6\text{ MB } (0.079\text{ GB})} \quad \text{vs} \quad \mathbf{14.04\text{ TB (decimal)} / 14.38\text{ TB (binary)}}
 \end{equation}
 This represents a verified physical memory reduction factor of:
 \begin{equation}
 \text{Reduction Factor} = \frac{14,383,600,000,000 \text{ bytes}}{78,643,200 \text{ bytes}} = \mathbf{182,900.2 \times}
 \end{equation}
-Furthermore, at the neural tensor level in \texttt{RecurrentMemoryBank} where $M = 8$ shared slots are cached:
+Furthermore, at the neural tensor level in \texttt{RecurrentMemoryBank} where $M = 8$ shared slots are cached (System~A):
 \begin{equation}
 \text{RAM}_{Bank} = 2 \times 8 \times 8 \times 128 \times 2 = 32,768 \text{ bytes} = \mathbf{32 \text{ KB}}
 \end{equation}
@@ -389,6 +385,7 @@ yielding a tensor-level compression factor:
 \begin{equation}
 \text{Compression Factor}_{\text{tensor}} = \frac{14.38\text{ TB}}{32\text{ KB}} = \mathbf{438,952,636 \times} \quad (>4.38 \times 10^8 \times)
 \end{equation}
+
 
 \begin{table*}[t]
 \centering
@@ -470,16 +467,16 @@ Working Memory KV-Cache  & $46.4$ MB     & $46.4$ MB     & $70.1$ MB      & $25.
 Full Attention KV-Cache  & $0.17$ GB     & $2.62$ GB     & $205.4$ GB     & $1.44$ TB      & $14.38$ TB      & \textbf{14.38 TB} \\
 KV-Cache Reduction Factor& $3.6\times$   & $53.9\times$  & $2,930\times$  & $56,470\times$ & $392,896\times$ & \textbf{542,641$\times$} \\
 Executive Reasoning Model& LLaMA-3-8B    & LLaMA-3-8B    & LLaMA-3-8B     & LLaMA-3-8B     & LLaMA-3-8B      & LLaMA-3-8B \\
-Factual Retrieval Accuracy & \textbf{12/12 (100\%)} & \textbf{5/5 (100\%)} & \textbf{9/9 (100\%)} & \textbf{5/5 (100\%)} & \textbf{5/5 (100\%)} & \textbf{5/5 (100\%)} \\
+Factual Retrieval Accuracy$^\S$ & \textbf{12/12 (100\%)} & \textbf{5/5 (100\%)} & \textbf{9/9 (100\%)} & \textbf{5/5 (100\%)} & \textbf{5/5 (100\%)} & \textbf{5/5 (100\%)} \\
 \bottomrule
 \end{tabular}%
 }
-\caption{Master empirical scaling benchmark across five corpus tiers spanning $1.6\times 10^3$ to $1.1\times 10^8$ tokens. $^\dagger$Symbolic throughput reflects the CPU-side lexical pre-filter scanning text at byte-level. $^\ddagger$Neural SLM latency reflects full semantic distillation using \texttt{SmolLM2-1.7B-Instruct} operating as an asynchronous background daemon (\S\ref{sec:hippocampus}). By decoupling memory from compute, we exchange an insurmountable $\mathcal{O}(N)$ memory barrier ($14.38$~TB VRAM, $176\times$ H100 GPUs) for a tractable linear $\mathcal{O}(T)$ background pipeline, preserving strict $\mathcal{O}(1)$ working memory.}
+\caption{Master empirical scaling benchmark across five corpus tiers spanning $1.6\times 10^3$ to $1.1\times 10^8$ tokens (all results from \textbf{System~B: Neural Hippocampus} pipeline). $^{\dagger}$Symbolic throughput reflects the CPU-side lexical pre-filter scanning text at byte-level. $^{\ddagger}$Neural SLM latency reflects full semantic distillation using \texttt{SmolLM2\allowbreak-1.7B\allowbreak-Instruct} operating as an asynchronous background daemon (\S\ref{sec:hippocampus}); at 110M tokens this represents approximately 5.6 days on Apple Silicon hardware. $^{\S}$Factual accuracy is measured on $5$--$12$ task-specific retrieval questions per tier; these proprietary probes are not directly comparable to standardized benchmarks such as bAbI or RULER. See Section~\ref{sec:hippocampus} for standardized bAbI evaluation (60\% zero-shot, 3/5 tasks).}
 \label{tab:master_benchmark}
 \end{table*}
 
 \subsection{Empirical Results and Qualitative Ingestion Fidelity}
-Table~\ref{tab:master_benchmark} summarizes the master benchmark results. In Tier 3 (Polish Bible, 1.57M tokens), Meta-Llama-3-8B correctly answered all 9 cross-testament queries (e.g., Methuselah's lifespan: 969 years; Ark dimensions: $300\times 50\times 30$ cubits; Judas' betrayal price: 30 pieces of silver; Revelation sealed: 144,000). In Tier 5A (Pure Semantic Mega-Stream, 109.7M tokens, zero digits), the system accurately recalled qualitative facts located at $11\text{M}$, $51\text{M}$, and $105\text{M}$ tokens with 100\% accuracy.
+Table~\ref{tab:master_benchmark} summarizes the master benchmark results. In Tier 3 (Polish Bible, 1.57M tokens), Meta-Llama-3-8B correctly answered all 9 cross-testament queries (e.g., Methuselah's lifespan: 969 years; Ark dimensions: $300\times 50\times 30$ cubits; Judas' betrayal price: 30 pieces of silver; Revelation sealed: 144,000). In Tier 5A (Pure Semantic Mega-Stream, 109.7M tokens, zero digits), the system accurately recalled qualitative facts located at $11\text{M}$, $51\text{M}$, and $105\text{M}$ tokens with 100% accuracy.
 
 % -----------------------------------------------------------------------------
 \section{Comparative Taxonomy \& Prior Art Delineation}
@@ -527,7 +524,7 @@ Conflict Overwrite & Implicit attention & Additive update ($\Delta M = vk^T$) & 
 \label{sec:adversarial}
 
 \subsection{Vulnerability Audit Overview}
-We executed a zero-trust red-team audit (\texttt{ADVERSARIAL\_AUDIT.md}) with an automated test suite (\texttt{test\_adversarial\_redteam.py}). Table~\ref{tab:redteam} summarizes the empirical vulnerability telemetry.
+We conducted a systematic adversarial evaluation (\texttt{ADVERSARIAL\_AUDIT.md}) with an automated test suite (\texttt{test\_adversarial\_redteam.py}). All probes target \textbf{System~B} (heuristic regex baseline and its early iterations); \textbf{System~A} (differentiable \texttt{RecurrentMemoryBank}) was not subject to this evaluation and is reserved for future work involving trained checkpoints. Table~\ref{tab:redteam} summarizes the results.
 
 \begin{table}[h]
 \centering
@@ -583,9 +580,9 @@ To transition to a robust learning-based architecture, we formulated five mitiga
 \label{sec:hippocampus}
 
 \subsection{Motivation: Addressing the Algorithmic Heuristic Critique}
-The adversarial audit (\S\ref{sec:adversarial}) exposed a core architectural critique: System B (Autonomic Symbolic Distillation) in early iterations was implemented as a CPU-side heuristic engine utilizing regular expressions. While demonstrating rigorous $\mathcal{O}(1)$ physical memory scaling and 100\% factual retrieval across 110 million streaming tokens, the distillation operator relied on pattern matching rather than deep neural semantic understanding. A critical reviewer could note: \emph{``The neural network did not process 110 million tokens; it attended to a 300-token summary compiled by a regular expression script.''}
+The adversarial evaluation (\S\ref{sec:adversarial}) exposed a core architectural critique: System~B (Autonomic Symbolic Distillation) in early iterations was implemented as a CPU-side heuristic engine utilizing regular expressions. While demonstrating $\mathcal{O}(1)$ physical memory scaling and 100\% factual retrieval on proprietary task-specific probes across 110 million streaming tokens, the distillation operator relied on pattern matching rather than deep neural semantic understanding. A critical reviewer could note: \emph{``The neural network did not process 110 million tokens; it attended to a 300-token summary compiled by a regular expression script.''}
 
-To resolve this limitation definitively, we replace the algorithmic parser with a \textbf{Dual-LLM Baddeley Cognitive Architecture}, deploying an on-device Small Language Model (SLM) as an \textbf{Artificial Sensory Hippocampus}.
+To address this limitation, we replace the algorithmic parser with a \textbf{Dual-LLM Baddeley Cognitive Architecture}, deploying an on-device Small Language Model (SLM) as an \textbf{Artificial Sensory Hippocampus}.
 
 \subsection{Architecture: Hierarchical Dual-LLM Cognitive Stack}
 The complete pipeline separates long-horizon streaming into three biologically grounded tiers:
@@ -635,9 +632,12 @@ Empirical ablation revealed a distinct capacity threshold. Testing \texttt{SmolL
 Co-locating a sensory ingestion model and an executive reasoning model on resource-constrained consumer hardware (e.g., Apple Silicon Unified Memory or single-GPU workstations) presents a memory bus contention challenge. We resolve this by structuring the runtime as an operating system process scheduler (\texttt{async\_cognitive\_runtime.py}):
 \begin{enumerate}[leftmargin=*]
     \item \textbf{Asynchronous Sensory Daemon:} The Hippocampus operates as a low-priority background thread, ingesting the unbounded document stream in 512-token batches and incrementally updating the working memory state $\mathcal{S}_t$.
-    \item \textbf{Dormant Executive Cortex:} The primary foundation model (Meta-Llama-3-8B) remains in deep sleep for $99.9\%$ of the ingestion timeline, drawing 0 FLOPs and consuming zero memory bandwidth.
-    \item \textbf{Instantaneous Preemptive Handover:} When an interactive user query arrives mid-stream, the runtime immediately suspends the Hippocampus daemon (measured handover latency $<0.1$~ms). The system surrenders 100\% of the memory bus and compute cores to the Executive Cortex, which generates a sub-second response strictly from the current state $\mathcal{S}_t$. Upon completion, the Cortex yields, and the Hippocampus resumes background ingestion without data loss.
+    \item \textbf{Dormant Executive Cortex:} The primary foundation model (Meta-Llama-3-8B) remains dormant for $99.9\%$ of the ingestion timeline, drawing 0 FLOPs and consuming zero memory bandwidth.
+    \item \textbf{Preemptive Handover:} When an interactive user query arrives mid-stream, the runtime immediately suspends the Hippocampus daemon. Measured handover latency is $<0.1$~ms (measured via \texttt{time.perf\_counter\_ns()} surrounding the \texttt{asyncio.Event.set()} call; 100 trials, median reported on Apple M-series). The system surrenders 100\% of the memory bus and compute cores to the Executive Cortex, which generates a sub-second response strictly from the current state $\mathcal{S}_t$. Upon completion, the Cortex yields, and the Hippocampus resumes background ingestion without data loss.
 \end{enumerate}
+
+\paragraph{Ingestion Latency \& O(T) Caveat:} While query-time complexity is $\mathcal{O}(1)$, document ingestion scales linearly $\mathcal{O}(T)$ with document length. At the 110M-token scale (Tier 5), full ingestion via the Neural Hippocampus requires approximately \textbf{5.6 days} on consumer Apple Silicon (MPS) hardware. This latency is acceptable for offline document pre-processing but precludes real-time streaming of ultra-long documents without distributed ingestion pipelines.
+
 \subsection{Standardized Academic Evaluation: bAbI \& BABILong Probing Suite}
 To ensure comparability against standard literature, we evaluated the architecture on canonical cognitive tracking tasks from the Meta AI \textbf{bAbI suite} \cite{weston2015towards} and \textbf{BABILong} \cite{kurilenko2024babilong}, probing state tracking, multi-hop relation binding, and spatial displacement. Under standard unconstrained attention, these tasks suffer severe accuracy drops as sequence length scales past 16k--64k tokens due to attention dilution.
 
@@ -664,7 +664,7 @@ Table~\ref{tab:babi_results} reports empirical zero-shot evaluation across five 
 \label{tab:babi_results}
 \end{table}
 
-Empirical zero-shot evaluation across canonical bAbI tasks achieves \textbf{60.0\% accuracy (3/5)} with sub-second executive inference latencies (mean $991.0$~ms on Apple Silicon). The architecture natively resolves single-fact displacement (Task 1), temporal trajectories (Task 3), and strict modal negation (Task 6), resolving early-prototype negation blindness.
+Empirical zero-shot evaluation across canonical bAbI tasks achieves \textbf{60.0\% accuracy (3/5)} with sub-second executive inference latencies (mean $991.0$~ms on Apple Silicon). Note that these results are on a \textbf{standardized external benchmark} (5 selected bAbI tasks) and are therefore not directly comparable to the 100\% recall figures in Table~\ref{tab:master_benchmark}, which measure task-specific retrieval on proprietary probes. The architecture natively resolves single-fact displacement (Task~1), temporal trajectories (Task~3), and strict modal negation (Task~6).
 
 \paragraph{Error Analysis \& The Relational Frontier of Flat Buffers:}
 Crucially, the isolated failure in \textbf{Task 2} (2-hop indirect relations) and partial recall in \textbf{Task 8} (inventory sets) precisely delineate the current frontier of flat episodic buffers: without explicit recursive graph traversal, transitive dependencies (cascading state updates when an agent moves with an attached entity) suffer from relational disconnect. This confirms our theoretical motivation in \S\ref{sec:mitigations} regarding the necessity of dynamic Subject-Predicate-Object (SPO) entity graphs (Mitigation 3). Rather than a systemic deficiency, this failure analysis provides direct empirical validation for our theoretical taxonomy, establishing a concrete foundation for graph-structured working memory.
@@ -672,9 +672,11 @@ Crucially, the isolated failure in \textbf{Task 2} (2-hop indirect relations) an
 
 % -----------------------------------------------------------------------------
 \section{Conclusion \& Future Directions}
-We presented a formalization, empirical scaling evaluation, and adversarial audit of Baddeley Cognitive Working Memory Architectures for Large Language Models. By replacing unconstrained $\mathcal{O}(N)$ KV-caches with a bounded quadripartite state space $\mathcal{S}$, the architecture eliminates physical scaling bottlenecks.
+We presented a formalization, empirical scaling evaluation, and adversarial evaluation of Baddeley Cognitive Working Memory Architectures for Large Language Models. By replacing unconstrained $\mathcal{O}(N)$ KV-caches with a bounded quadripartite state space $\mathcal{S}$, the architecture substantially reduces physical memory requirements at long context lengths.
 
-On Meta-Llama-3-8B-Instruct, the architecture reduces physical KV-cache memory from \textbf{$14.04$ Terabytes down to $78.6$ Megabytes ($0.079$ GB)} for prompt-level distillation, and down to \textbf{$32$ Kilobytes} for tensor-level slot memory banks---a hardware reduction exceeding \textbf{$182,900\times$}. Physical OS RSS profiling confirmed flat memory ($\Delta\text{RSS} \le 3.1$~MB) across 110 million streaming tokens with 100\% factual recall. Bounded cognitive working memory represents a foundational shift toward biologically grounded, scalable, and lifelong artificial intelligence.
+On Meta-Llama-3-8B-Instruct, the architecture reduces physical KV-cache memory from \textbf{$14.04$ Terabytes down to $78.6$ Megabytes ($0.079$~GB)} for prompt-level distillation, and down to \textbf{$32$ Kilobytes} for tensor-level slot memory banks (System~A)---a hardware reduction exceeding \textbf{$182,900\times$}. Physical OS RSS profiling confirmed flat memory ($\Delta\text{RSS} \le 3.1$~MB) across 110 million streaming tokens. On the proprietary five-tier benchmark, System~B (Neural Hippocampus) achieves 100\% factual recall on task-specific retrieval probes ($5$--$12$ questions per tier). On the standardized Meta~AI bAbI probing suite \cite{weston2015towards}, the architecture achieves \textbf{60\% zero-shot accuracy} (3/5 tasks), with failure confined to transitive 2-hop relational chaining (Task~2) and partial inventory binding (Task~8). These failures precisely identify the current frontier of flat episodic buffers, and motivate the graph-structured working memory direction outlined in Section~6.4.
+
+We note that while query-time inference is $\mathcal{O}(1)$, document ingestion at 110M tokens requires approximately 5.6~days on consumer hardware---a practical constraint that motivates distributed ingestion as future work. Source code: \url{https://github.com/waldemargajda/recurrent_model_test}. DOI: \href{https://doi.org/10.5281/zenodo.22768217}{10.5281/zenodo.22768217}.
 
 % -----------------------------------------------------------------------------
 \begin{thebibliography}{99}
