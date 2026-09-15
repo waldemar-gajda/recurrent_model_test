@@ -8,6 +8,8 @@
 \geometry{margin=1in}
 \usepackage{booktabs}
 \usepackage{tabularx}
+\usepackage{graphicx}
+\usepackage{makecell}
 \usepackage{microtype}
 \usepackage{hyperref}
 \usepackage{xcolor}
@@ -382,19 +384,20 @@ yielding a tensor-level compression factor of $\frac{14.38\text{ TB}}{32\text{ K
 
 \begin{table*}[t]
 \centering
-\small
-\begin{tabularx}{\textwidth}{lrrrrrr}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lrrrrr}
 \toprule
 \textbf{Context Length ($N$)} & \textbf{Full KV-Cache} & \textbf{H100 (80GB)} & \textbf{Cognitive Buffer} & \textbf{Neural Slot Bank} & \textbf{Reduction} \\
 \midrule
-1,000 (1k)       & $0.13$ GB  & $0.002$ & $78.6$ MB ($0.079$ GB) & $32$ KB & $1.7\times$ \\
-20,000 (20k)     & $2.62$ GB  & $0.033$ & $78.6$ MB ($0.079$ GB) & $32$ KB & $33.3\times$ \\
-100,000 (100k)   & $13.11$ GB & $0.16$  & $78.6$ MB ($0.079$ GB) & $32$ KB & $166.7\times$ \\
-1,530,000 (1.53M)& $200.5$ GB & $2.5$   & $70.1$ MB ($0.070$ GB) & $32$ KB & $2,860\times$ \\
-10,973,816 (11M) & $1.44$ TB  & $18.0$  & $25.5$ MB ($0.026$ GB) & $32$ KB & $56,470\times$ \\
+1,000 (1k)        & $0.13$ GB  & $0.002$ & $78.6$ MB ($0.079$ GB) & $32$ KB & $1.7\times$ \\
+20,000 (20k)      & $2.62$ GB  & $0.033$ & $78.6$ MB ($0.079$ GB) & $32$ KB & $33.3\times$ \\
+100,000 (100k)    & $13.11$ GB & $0.16$  & $78.6$ MB ($0.079$ GB) & $32$ KB & $166.7\times$ \\
+1,530,000 (1.53M) & $200.5$ GB & $2.5$   & $70.1$ MB ($0.070$ GB) & $32$ KB & $2,860\times$ \\
+10,973,816 (11M)  & $1.44$ TB  & $18.0$  & $25.5$ MB ($0.026$ GB) & $32$ KB & $56,470\times$ \\
 109,738,160 (110M)& \textbf{14.38 TB}& \textbf{176.0} & \textbf{26.5--78.6 MB} & \textbf{32 KB} & \textbf{182,900--542,000$\times$} \\
 \bottomrule
-\end{tabularx}
+\end{tabular}%
+}
 \caption{Physical KV-cache memory scaling for Meta-Llama-3-8B (GQA bfloat16, 131,072 bytes/token) comparing uncompressed dense attention against Bounded Cognitive Working Memory.}
 \label{tab:hardware_scaling}
 \end{table*}
@@ -404,7 +407,7 @@ We implemented native operating system process memory telemetry using \texttt{ps
 
 \begin{table}[h]
 \centering
-\small
+\resizebox{\columnwidth}{!}{%
 \begin{tabular}{lrrrrr}
 \toprule
 \textbf{Corpus Tier} & \textbf{Tokens} & \textbf{Peak RSS} & \textbf{Post-Eviction} & \textbf{$\Delta\text{RSS}$} & \textbf{Status} \\
@@ -414,7 +417,8 @@ Canonical Works (19 Vol.)  & $10,973,816$  & $652.2$ MB & $652.2$ MB & $+8.0$ MB
 Pure Semantic (0 Digits)   & $109,738,160$ & $703.2$ MB & $703.2$ MB & $+0.1$ MB  & Verified Flat \\
 Alphanumeric Mega-Scale    & $109,738,160$ & $749.8$ MB & $749.8$ MB & $\mathbf{+0.16}$ \textbf{MB} & Verified Flat \\
 \bottomrule
-\end{tabular}
+\end{tabular}%
+}
 \caption{Physical OS Resident Set Size (RSS) profiling across 110M tokens using \texttt{psutil}. Net steady-state growth is under $0.2$~MB across $109.7$M tokens, confirming active eviction.}
 \label{tab:rss_metrics}
 \end{table}
@@ -439,8 +443,8 @@ We evaluated factual recall, compression ratios, and temporal stability across f
 
 \begin{table*}[t]
 \centering
-\footnotesize
-\begin{tabularx}{\textwidth}{lrrrrrr}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lcccccc}
 \toprule
 \textbf{Metric} & \textbf{Tier 1: M\&A} & \textbf{Tier 2: Scaled} & \textbf{Tier 3: Bible} & \textbf{Tier 4: Canon} & \textbf{Tier 5A: Semantic} & \textbf{Tier 5B: Alpha} \\
 \midrule
@@ -459,7 +463,8 @@ KV-Cache Reduction Factor& $3.6\times$   & $53.9\times$  & $2,930\times$  & $56,
 Executive Reasoning Model& LLaMA-3-8B    & LLaMA-3-8B    & LLaMA-3-8B     & LLaMA-3-8B     & LLaMA-3-8B      & LLaMA-3-8B \\
 Factual Retrieval Accuracy & \textbf{12/12 (100\%)} & \textbf{5/5 (100\%)} & \textbf{9/9 (100\%)} & \textbf{5/5 (100\%)} & \textbf{5/5 (100\%)} & \textbf{5/5 (100\%)} \\
 \bottomrule
-\end{tabularx}
+\end{tabular}%
+}
 \caption{Master empirical scaling benchmark across five corpus tiers spanning $1.6\times 10^3$ to $1.1\times 10^8$ tokens. $^\dagger$Symbolic throughput reflects the CPU-side lexical pre-filter scanning text at byte-level. $^\ddagger$Neural SLM latency reflects full semantic distillation using \texttt{SmolLM2-1.7B-Instruct} operating as an asynchronous background daemon (\S\ref{sec:hippocampus}). By decoupling memory from compute, we exchange an insurmountable $\mathcal{O}(N)$ memory barrier ($14.38$~TB VRAM, $176\times$ H100 GPUs) for a tractable linear $\mathcal{O}(T)$ background pipeline, preserving strict $\mathcal{O}(1)$ working memory.}
 \label{tab:master_benchmark}
 \end{table*}
@@ -475,8 +480,8 @@ Table~\ref{tab:prior_art} contrasts our architecture against existing approaches
 
 \begin{table*}[t]
 \centering
-\tiny
-\begin{tabularx}{\textwidth}{p{2.0cm}p{1.9cm}p{1.9cm}p{1.9cm}p{1.9cm}p{1.9cm}p{2.4cm}}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{p{2.6cm}p{2.3cm}p{2.3cm}p{2.3cm}p{2.3cm}p{2.3cm}p{3.0cm}}
 \toprule
 \textbf{Dimension} & \textbf{RMT} \cite{bulatov2022recurrent} & \textbf{Infini-attn} \cite{munkhdalai2024leave} & \textbf{Linear Attn} \cite{katharopoulos2020transformers} & \textbf{MemGPT} \cite{packer2023memgpt} & \textbf{Mamba} \cite{gu2023mamba} & \textbf{Baddeley WM (Ours)} \\
 \midrule
@@ -488,7 +493,8 @@ Deliberation & Single forward pass & Single forward pass & Single forward pass &
 Pretrained LLM & Segment pretraining & Modifies internal QKV & Linear attention pretraining & Black-box LLM wrapper & New architecture & Dual: Modular bridge OR autonomic engine \\
 Conflict Overwrite & Implicit attention & Additive update ($\Delta M = vk^T$) & Additive feature accumulation & Function calling edit & State decay & Deterministic slot overwrite \& scoped entity graph \\
 \bottomrule
-\end{tabularx}
+\end{tabular}%
+}
 \caption{Comparative taxonomy delineating Baddeley Cognitive Working Memory against leading sequence modeling paradigms.}
 \label{tab:prior_art}
 \end{table*}
@@ -507,13 +513,14 @@ Conflict Overwrite & Implicit attention & Additive update ($\Delta M = vk^T$) & 
 
 % -----------------------------------------------------------------------------
 \section{Adversarial Red-Teaming, Vulnerability Analysis \& Mitigations}
+\label{sec:adversarial}
 
 \subsection{Vulnerability Audit Overview}
 We executed a zero-trust red-team audit (\texttt{ADVERSARIAL\_AUDIT.md}) with an automated test suite (\texttt{test\_adversarial\_redteam.py}). Table~\ref{tab:redteam} summarizes the empirical vulnerability telemetry.
 
 \begin{table}[h]
 \centering
-\small
+\resizebox{\columnwidth}{!}{%
 \begin{tabular}{llr}
 \toprule
 \textbf{Attack Surface / Vulnerability Vector} & \textbf{Empirical Status} & \textbf{Severity} \\
@@ -524,7 +531,8 @@ We executed a zero-trust red-team audit (\texttt{ADVERSARIAL\_AUDIT.md}) with an
 4. Out-of-Distribution Vocabulary Drift      & EXPOSED (100.0\%) & HIGH \\
 5. Neural Memory Bank Attention Dilution     & EXPOSED ($>0.999$) & MEDIUM-HIGH \\
 \bottomrule
-\end{tabular}
+\end{tabular}%
+}
 \caption{Adversarial red-team audit summary matrix from \texttt{test\_adversarial\_redteam.py}.}
 \label{tab:redteam}
 \end{table}
@@ -542,6 +550,7 @@ We executed a zero-trust red-team audit (\texttt{ADVERSARIAL\_AUDIT.md}) with an
 Academic integrity requires transparent disclosure: early demonstration scripts contained hardcoded string literals (\texttt{demo\_cognitive\_memory.py}), targeted substring search in multi-million streaming classes, and evaluation on synthetic training templates. These shortcuts apply strictly to early prototypes; core mathematical models and the sanitized benchmark harness implement genuine algorithmic logic.
 
 \subsection{Five Concrete Architectural Mitigations}
+\label{sec:mitigations}
 To transition to a robust learning-based architecture, we formulated five mitigations:
 \begin{enumerate}
     \item \textbf{Small-LM Semantic Parser:} Replace regex with an on-device Small Language Model (e.g., SmolLM2-360M-Instruct, Qwen2.5-0.5B-Instruct) emitting validated JSON entity triples, providing invariance to phrasing and syntax.
@@ -556,6 +565,7 @@ To transition to a robust learning-based architecture, we formulated five mitiga
 
 % -----------------------------------------------------------------------------
 \section{Neural Hippocampus: Replacing Regex Distillation with a Sensory SLM}
+\label{sec:hippocampus}
 
 \subsection{Motivation: Addressing the Algorithmic Heuristic Critique}
 The adversarial audit (\S\ref{sec:adversarial}) exposed a core architectural critique: System B (Autonomic Symbolic Distillation) in early iterations was implemented as a CPU-side heuristic engine utilizing regular expressions. While demonstrating rigorous $\mathcal{O}(1)$ physical memory scaling and 100\% factual retrieval across 110 million streaming tokens, the distillation operator relied on pattern matching rather than deep neural semantic understanding. A critical reviewer could note: \emph{``The neural network did not process 110 million tokens; it attended to a 300-token summary compiled by a regular expression script.''}
@@ -579,8 +589,8 @@ We benchmarked the Neural Hippocampus against the adversarial failure modes expo
 
 \begin{table}[h]
 \centering
-\small
-\begin{tabular}{llcc}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{lp{6.2cm}cc}
 \toprule
 \textbf{Test ID} & \textbf{Adversarial Scenario} & \textbf{Regex Baseline} & \textbf{SLM Hippocampus} \\
 \midrule
@@ -595,7 +605,8 @@ We benchmarked the Neural Hippocampus against the adversarial failure modes expo
 \midrule
 \textbf{Total}  & \textbf{Overall Adversarial Robustness} & \textbf{4/8 (50.0\%)} & \textbf{8/8 (100.0\%)} \\
 \bottomrule
-\end{tabular}
+\end{tabular}%
+}
 \caption{Adversarial robustness evaluation: Regex System B baseline vs. Neural Hippocampus (\texttt{SmolLM2-1.7B-Instruct}). The neural sensory layer achieves 100\% recall across all syntax and negation probes.}
 \label{tab:hippocampus_results}
 \end{table}
@@ -619,7 +630,7 @@ Table~\ref{tab:babi_results} reports empirical zero-shot evaluation across five 
 
 \begin{table}[h]
 \centering
-\small
+\resizebox{\columnwidth}{!}{%
 \begin{tabular}{llllcc}
 \toprule
 \textbf{Task ID} & \textbf{bAbI Task Name} & \textbf{Category} & \textbf{Target} & \textbf{Result} & \textbf{Status} \\
@@ -632,7 +643,8 @@ Table~\ref{tab:babi_results} reports empirical zero-shot evaluation across five 
 \midrule
 \textbf{Total}  & \textbf{bAbI Zero-Shot Accuracy} & & & & \textbf{3/5 (60.0\%)} \\
 \bottomrule
-\end{tabular}
+\end{tabular}%
+}
 \caption{Empirical evaluation of Bounded Baddeley Working Memory on canonical bAbI / BABILong tasks \cite{weston2015towards,kurilenko2024babilong}. Peak host RAM was flat at $247.3$~MB RSS across all tasks with mean query latency of $991.0$~ms.}
 \label{tab:babi_results}
 \end{table}
