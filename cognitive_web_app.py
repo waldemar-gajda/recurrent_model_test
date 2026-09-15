@@ -232,16 +232,34 @@ class DualCognitiveEngine:
         s = re.sub(r"^([-•*~]|\d+[\.\)\:])\s*", "", s).strip()
         if len(s) < 20 or len(s) > 380:
             return False
+        # Fakt musi być kompletnym zdaniem zakończonym kropką, pytajnikiem, wykrzyknikiem lub cudzysłowem
+        if s[-1] not in '.!?"\'”)':
+            return False
         # Przynajmniej 4 słowa
         words = [w for w in re.split(r'\s+', s) if len(w) > 1 and any(c.isalnum() for c in w)]
         if len(words) < 4:
             return False
+        # Odrzucenie pętli degeneracji powtórzeniowej (np. "nie, nie, nie..." lub pętli pojedynczych słów)
+        unique_words = set(w.lower() for w in words)
+        if (len(unique_words) / len(words)) < 0.50:
+            return False
+        for w in words:
+            if len(w) > 3 and s.lower().count(w.lower()) > 4:
+                return False
         # Znaki alfanumeryczne muszą stanowić większość (odrzuca ciągi kresek, szum OCR)
         alnum_chars = sum(1 for c in s if c.isalnum() or c in ' ,.;:!?-–„”"\'()')
         if (alnum_chars / len(s)) < 0.70:
             return False
-        # Filtry szumu prawnego i platformowego
         lower = s.lower()
+        # Filtry formułek wprowadzających asystenta
+        intro_phrases = [
+            "oto najważniejsz", "oto 4 ", "oto 3 ", "oto 2 ", "oto kilka", "oto lista", "oto fakty", "oto wątki",
+            "poniżej przedstawiam", "poniżej znajduje się", "oto podsumowanie", "oto wybrane", "oto tytuły",
+            "oto główne"
+        ]
+        if any(ip in lower for ip in intro_phrases):
+            return False
+        # Filtry szumu prawnego i platformowego
         noise_terms = [
             "project gutenberg", "gutenberg-tm", "gutenberg.org", "e-book", "ebook",
             "terms of use", "license agreement", "licencja", "distributed proofreading",
@@ -323,17 +341,17 @@ class DualCognitiveEngine:
             if not cleaned_text.strip():
                 return []
 
-            # 1. Błyskawiczny skan strukturalny (Tytuły, Rozdziały, Akty, Spis treści)
+            # 1. Błyskawiczny skan strukturalny (Tytuły, Rozdziały, Spis treści)
             structure_titles = []
             title_matches = re.findall(
-                r'^(?:[ \t]*)(?:THE\s+(?:TRAGEDY|COMEDY|LIFE|FIRST|SECOND|THIRD)\s+OF\s+[A-Z\s,]+|'
-                r'Rozdział\s+[IVXLCDM\d]+[^\n]*|Tom\s+[IVXLCDM\d]+[^\n]*|Chapter\s+[IVXLCDM\d]+[^\n]*|'
-                r'Akt\s+[IVXLCDM\d]+[^\n]*|ACT\s+[IVXLCDM\d]+[^\n]*)',
+                r'^(?:[ \t]*)(?:THE\s+(?:TRAGEDY|COMEDY|LIFE|FIRST|SECOND|THIRD|HISTORY)\s+OF\s+[A-Z\s,\']{3,60}|'
+                r'(?:1[56]\d\d\s+)?THE\s+(?:SONNETS|TRAGEDY|COMEDY|TEMPEST|WINTER\'S\s+TALE)[^\n]*|'
+                r'Rozdział\s+[IVXLCDM\d]+[^\n]{3,}|Tom\s+[IVXLCDM\d]+[^\n]{3,}|Chapter\s+[IVXLCDM\d]+[^\n]{3,})',
                 cleaned_text,
                 flags=re.MULTILINE
             )
             for tm in title_matches[:15]:
-                t_clean = tm.strip()
+                t_clean = re.sub(r'[\r\n]+.*', '', tm).strip()
                 if 5 < len(t_clean) < 80 and t_clean not in structure_titles:
                     structure_titles.append(t_clean)
 
@@ -401,9 +419,9 @@ class DualCognitiveEngine:
                                         "(postaci i ich role, kluczowe wydarzenia fabularne, tezy, relacje, dane liczbowe, definicje lub wnioski).\n"
                                         "ZASADY:\n"
                                         "1. Każdy fakt zapisz w osobnej linii zaczynając od myślnika '- '.\n"
-                                        "2. Pisz wyłącznie w języku polskim, pełnymi, poprawnymi gramatycznie zdaniami.\n"
+                                        "2. Podsumuj fakty i wydarzenia w języku polskim (nie cytuj surowego tekstu, lecz opisz po polsku co z niego wynika).\n"
                                         "3. Ignoruj szum redakcyjny, numery stron, prawa autorskie i formułki wydawnicze.\n"
-                                        "4. Żadnych wstępów, komentarzy ani podsumowań — wygeneruj tylko listę faktów."
+                                        "4. Żadnych wstępów, komentarzy ani powtórzeń tych samych słów — wygeneruj tylko zwięzłą listę unikalnych faktów."
                                     )
                                 },
                                 {
@@ -417,7 +435,8 @@ class DualCognitiveEngine:
                             with torch.no_grad():
                                 out_ids = self.cortex_model.generate(
                                     **inputs,
-                                    max_new_tokens=140,
+                                    max_new_tokens=160,
+                                    repetition_penalty=1.18,
                                     do_sample=False,
                                     pad_token_id=self.cortex_tok.pad_token_id
                                 )
