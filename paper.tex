@@ -12,6 +12,7 @@
 \usepackage{makecell}
 \usepackage{array}
 \usepackage{microtype}
+\setlength{\emergencystretch}{2em}
 \usepackage{hyperref}
 \usepackage{xcolor}
 \usepackage{listings}
@@ -589,7 +590,7 @@ To resolve this limitation definitively, we replace the algorithmic parser with 
 \subsection{Architecture: Hierarchical Dual-LLM Cognitive Stack}
 The complete pipeline separates long-horizon streaming into three biologically grounded tiers:
 \begin{enumerate}[leftmargin=*]
-    \item \textbf{Artificial Hippocampus (Sensory SLM):} An on-device quantized neural model (\texttt{SmolLM2-1.7B-Instruct}, 1.71B parameters) reading sequential chunks ($T_{chunk} \approx 512$ tokens). Operating as an autonomic sensory gateway, the SLM extracts verified semantic entity triples:
+    \item \textbf{Artificial Hippocampus (Sensory SLM):} An on-device quantized Small Language Model (\texttt{SmolLM2\allowbreak-1.7B\allowbreak-Instruct}, 1.71B parameters) reading sequential chunks ($T_{chunk} \approx 512$ tokens). Operating as an autonomic sensory gateway, the SLM extracts verified semantic entity triples:
     \begin{equation}
     \mathcal{T}_t = \text{SLM}_{\text{Hippocampus}}(X_t) \to \left\{ (e_i, a_i, v_i) \right\}_{i=1}^K
     \end{equation}
@@ -625,10 +626,10 @@ We benchmarked the Neural Hippocampus against the adversarial failure modes expo
 \label{tab:hippocampus_results}
 \end{table}
 
-\textbf{Latency and Memory Profile:} On Apple Silicon (MPS), \texttt{SmolLM2-1.7B-Instruct} processes 512-token chunks in an average inference latency of \textbf{$2.28$~seconds per chunk} with zero memory leakage, retaining the strict physical $\mathcal{O}(1)$ working memory footprint.
+\textbf{Latency and Memory Profile:} On Apple Silicon (MPS), \texttt{SmolLM2\allowbreak-1.7B\allowbreak-Instruct} processes 512-token chunks in an average inference latency of \textbf{$2.28$~seconds per chunk} with zero memory leakage, retaining the strict physical $\mathcal{O}(1)$ working memory footprint.
 
 \subsection{The Hippocampal Capacity Threshold}
-Empirical ablation revealed a distinct capacity threshold. Testing \texttt{SmolLM2-135M-Instruct} (135M parameters) resulted in severe instruction collapse: the model failed to follow rigid JSON constraints and suffered in-context template leakage. In contrast, scaling to 1.7B parameters provided immediate structural adherence and robust semantic extraction. This identifies an empirical lower bound of $\approx 1\text{--}2\text{B}$ parameters for reliable, on-device hippocampal distillation.
+Empirical ablation revealed a distinct capacity threshold. Testing \texttt{SmolLM2\allowbreak-135M\allowbreak-Instruct} (135M parameters) resulted in severe instruction collapse: the model failed to follow rigid JSON constraints and suffered in-context template leakage. In contrast, scaling to 1.7B parameters provided immediate structural adherence and robust semantic extraction. This identifies an empirical lower bound of $\approx 1\text{--}2\text{B}$ parameters for reliable, on-device hippocampal distillation.
 
 \subsection{The Operating System Paradigm: Asynchronous Ingestion \& Preemptive Handover}
 Co-locating a sensory ingestion model and an executive reasoning model on resource-constrained consumer hardware (e.g., Apple Silicon Unified Memory or single-GPU workstations) presents a memory bus contention challenge. We resolve this by structuring the runtime as an operating system process scheduler (\texttt{async\_cognitive\_runtime.py}):
