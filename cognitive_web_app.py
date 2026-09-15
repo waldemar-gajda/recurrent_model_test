@@ -76,58 +76,67 @@ class MemoryAssertion:
 class BaddeleyWorkingMemoryStore:
     """Maintains an entity-scoped, bounded working memory of active context."""
 
-    def __init__(self, max_assertions: int = 80):
+    def __init__(self, max_assertions: int = 120):
         self.max_assertions = max_assertions
-        self.lock = asyncio.Lock()
+        self.lock = threading.Lock()
         self.assertions: collections.deque[MemoryAssertion] = collections.deque(maxlen=max_assertions)
         self.sources: List[Dict[str, Any]] = []
         self.total_tokens_ingested: int = 0
         self.last_ingest_time: str = "Brak"
 
     async def add_source(self, name: str, char_count: int, source_type: str):
-        async with self.lock:
-            self.sources.append({
-                "name": name,
-                "chars": char_count,
-                "type": source_type,
-                "time": datetime.datetime.now().strftime("%H:%M:%S")
-            })
+        with self.lock:
+            # Avoid duplicate source entries with identical name
+            existing = [s for s in self.sources if s["name"] == name]
+            if existing:
+                existing[0]["chars"] = char_count
+                existing[0]["time"] = datetime.datetime.now().strftime("%H:%M:%S")
+            else:
+                self.sources.append({
+                    "name": name,
+                    "chars": char_count,
+                    "type": source_type,
+                    "time": datetime.datetime.now().strftime("%H:%M:%S")
+                })
 
     async def store_assertions(self, texts: List[str], source: str):
-        async with self.lock:
+        with self.lock:
             now_str = datetime.datetime.now().strftime("%H:%M:%S")
             self.last_ingest_time = now_str
             for t in texts:
                 cleaned = t.strip()
                 if len(cleaned) > 15:
-                    self.assertions.append(MemoryAssertion(
-                        id=f"M-{int(time.time() * 1000) % 100000}",
-                        source=source,
-                        text=cleaned[:300],
-                        timestamp=now_str
-                    ))
+                    clean_norm = cleaned[:350]
+                    # Deduplication check against existing assertions
+                    if not any(a.text.lower() == clean_norm.lower() for a in self.assertions):
+                        self.assertions.append(MemoryAssertion(
+                            id=f"M-{int(time.time() * 1000) % 100000}",
+                            source=source,
+                            text=clean_norm,
+                            timestamp=now_str
+                        ))
 
-    async def get_working_memory_prompt(self, max_chars: int = 4000) -> str:
+    async def get_working_memory_prompt(self, max_chars: int = 4500) -> str:
         """Kompiluje stan pamięci roboczej do promptu dla Kory Wykonawczej."""
-        async with self.lock:
+        with self.lock:
             if not self.assertions:
                 return "Pamięć robocza jest pusta (brak wgranych materiałów ani skopiowanego tekstu)."
-            lines = [f"• [{a.source}] {a.text}" for a in list(self.assertions)[-30:]]
+            lines = [f"• [{a.source}] {a.text}" for a in list(self.assertions)[-40:]]
             result = "\n".join(lines)
             return result[:max_chars]
 
     async def snapshot(self) -> Dict[str, Any]:
-        async with self.lock:
+        with self.lock:
             return {
                 "assertion_count": len(self.assertions),
-                "assertions": [dataclasses.asdict(a) for a in list(self.assertions)[-25:]],
+                "assertions": [dataclasses.asdict(a) for a in list(self.assertions)],
                 "sources": list(self.sources),
                 "total_tokens": self.total_tokens_ingested,
                 "last_ingest": self.last_ingest_time,
             }
 
     async def clear(self):
-        async with self.lock:
+        with self.lock:
             self.assertions.clear()
             self.sources.clear()
             self.total_tokens_ingested = 0
@@ -161,6 +170,14 @@ class DualCognitiveEngine:
         self.is_ready = False
         self.loading_in_progress = False
         self.hippo_active = False
+
+        # Continuous ingestion state
+        self.is_ingesting = False
+        self.ingestion_progress = 0
+        self.ingestion_step = 0
+        self.ingestion_total = 0
+        self.ingestion_status = ""
+        self.ingestion_facts_count = 0
 
         self.configure_model(model_choice)
 
@@ -210,48 +227,95 @@ class DualCognitiveEngine:
 
     # ── Source Cleaning & Semantic Distillation into Hippocampus ─────────────
 
+    def is_valid_fact(self, text: str) -> bool:
+        s = text.strip()
+        s = re.sub(r"^([-•*~]|\d+[\.\)\:])\s*", "", s).strip()
+        if len(s) < 20 or len(s) > 380:
+            return False
+        # Przynajmniej 4 słowa
+        words = [w for w in re.split(r'\s+', s) if len(w) > 1 and any(c.isalnum() for c in w)]
+        if len(words) < 4:
+            return False
+        # Znaki alfanumeryczne muszą stanowić większość (odrzuca ciągi kresek, szum OCR)
+        alnum_chars = sum(1 for c in s if c.isalnum() or c in ' ,.;:!?-–„”"\'()')
+        if (alnum_chars / len(s)) < 0.70:
+            return False
+        # Filtry szumu prawnego i platformowego
+        lower = s.lower()
+        noise_terms = [
+            "project gutenberg", "gutenberg-tm", "gutenberg.org", "e-book", "ebook",
+            "terms of use", "license agreement", "licencja", "distributed proofreading",
+            "all rights reserved", "wersja elektroniczna", "prawa zastrzeżone",
+            "tłumaczenie automatyczne"
+        ]
+        if any(nt in lower for nt in noise_terms):
+            return False
+        return True
+
     def clean_source_text(self, text: str) -> str:
         """
-        Oczyszcza surowy tekst dokumentu (np. z PDF):
-        - Łączy słowa rozbite dywizem na końcu linii (np. 'luxu-\\nry' -> 'luxury')
-        - Łączy liczby i symbole rozbite przez PDF (np. '95\\n%' -> '95%')
-        - Łączy linie wewnątrz akapitów rozbite przez formatowanie PDF
-        - Usuwa powtarzalne stopki, nagłówki i szum redakcyjny (nie kasując kluczowych danych liczbowych)
+        Oczyszcza surowy tekst dokumentu (PDF, TXT, e-booki):
+        - Wykrywa i odcina nagłówki/stopki licencyjne Project Gutenberg
+        - Usuwa powtarzające się separatory linii (myślniki, gwiazdki, znaki równości)
+        - Łączy słowa i liczby rozbite przez formatowanie PDF
+        - Łączy linie wewnątrz akapitów
+        - Filtruje szum redakcyjny i numery stron
         """
-        # 1. Łączenie liczb z procentami lub jednostkami rozbitych enterem
+        # 0. Wykrywanie i odcinanie nagłówków/stopek Gutenberga
+        sm = re.search(r'\*\*\*\s*START OF (THE|THIS) PROJECT GUTENBERG[^\n]*\*\*\*', text, re.IGNORECASE)
+        if sm:
+            text = text[sm.end():]
+        em = re.search(r'\*\*\*\s*END OF (THE|THIS) PROJECT GUTENBERG[^\n]*\*\*\*', text, re.IGNORECASE)
+        if em:
+            text = text[:em.start()]
+
+        # 1. Usuwanie linii będących ciągami myślników, kresek, gwiazdek lub znaków równości
+        text = re.sub(r'^[-\s•*=_~·]{3,}$', '', text, flags=re.MULTILINE)
+
+        # 2. Łączenie liczb z procentami lub jednostkami rozbitych enterem
         t = re.sub(r'(\d+)\s*\n\s*(%|mln|mld|tys\.|proc\.)', r'\1\2', text)
-        # 2. Łączenie słów rozdzielonych łącznikiem na końcu linii
+        # 3. Łączenie słów rozdzielonych łącznikiem na końcu linii
         t = re.sub(r'(\w+)-\s*\n\s*(\w+)', r'\1\2', t)
-        # 3. Łączenie linii wewnątrz zdań (usuwa pojedyncze \n niepoprzedzone kropką/dwukropkiem)
+        # 4. Łączenie linii wewnątrz zdań (usuwa pojedyncze \n niepoprzedzone kropką/dwukropkiem)
         t = re.sub(r'(?<![.!?:\n])\n(?![A-Z0-9\n])', ' ', t)
-        # 4. Filtr szumu: linie będące numerami stron lub formułkami wydawniczymi
+
+        # 5. Filtr szumu: linie będące numerami stron lub formułkami wydawniczymi
         cleaned_lines = []
         for line in t.split('\n'):
             l_strip = line.strip()
             if not l_strip:
                 continue
-            # Tylko jawne nagłówki stron usuwamy, nigdy same cyfry (np. 95, 637 na slajdach)
             if re.match(r'^(page\s+\d+(\s+of\s+\d+)?|strona\s+\d+(\s+z\s+\d+)?)$', l_strip, re.IGNORECASE):
                 continue
-            if any(term in l_strip.lower() for term in ['all rights reserved', 'doi: 10.', 'isbn 978-', 'printed in', 'taylor & francis', 'contents', 'index']):
+            if any(term in l_strip.lower() for term in ['all rights reserved', 'doi: 10.', 'isbn 978-', 'printed in', 'taylor & francis', 'terms of use']):
                 continue
             cleaned_lines.append(l_strip)
         return '\n\n'.join(cleaned_lines)
 
-    def distill_document_chunks(self, full_text: str, source_name: str) -> List[str]:
+    def distill_document_stream(self, full_text: str, source_name: str, on_fact_callback=None) -> List[str]:
         """
-        Asymilacja semantyczna materiału źródłowego przez Korę (LLaMA-3-8B):
-        - Oczyszcza surowy tekst i filtruje szum redakcyjny
-        - Dzieli na logiczne makro-sekcje
-        - Wykorzystuje model do wygenerowania ustrukturyzowanych faktów/notatek w języku polskim
-        - Zapisuje notatki do pamięci roboczej O(1) i natychmiast eksmituje surowe tokeny
+        Ciągła, asynchroniczna asymilacja semantyczna w architekturze Baddeleya O(1):
+        - Czyści surowy tekst i usuwa szum Gutenberga / wydawniczy.
+        - Dzieli na makro-bloki logiczne.
+        - Dobiera optymalną liczbę próbkowania obejmującą 100% rozpiętości dokumentu.
+        - Wyprowadza ustrukturyzowane fakty przez Korę w tle.
+        - Na bieżąco przekazuje fakty do callbacku (np. zapis do pamięci roboczej).
         """
         self.hippo_active = True
+        self.is_ingesting = True
+        self.ingestion_progress = 0
+        self.ingestion_step = 0
+        self.ingestion_total = 0
+        self.ingestion_facts_count = 0
+        self.ingestion_status = f"Przygotowanie: {source_name}..."
+
+        extracted_facts: List[str] = []
+
         try:
-            # Jeśli Kora jest aktywnie ładowana w tle, poczekaj na zakończenie
+            # Poczekaj jeśli model jeszcze się ładuje
             if self.cortex_model is None and self.loading_in_progress:
                 wait_sec = 0
-                while self.cortex_model is None and self.loading_in_progress and wait_sec < 30:
+                while self.cortex_model is None and self.loading_in_progress and wait_sec < 40:
                     time.sleep(0.5)
                     wait_sec += 1
 
@@ -259,14 +323,34 @@ class DualCognitiveEngine:
             if not cleaned_text.strip():
                 return []
 
-            # Podział na akapity
+            # 1. Błyskawiczny skan strukturalny (Tytuły, Rozdziały, Akty, Spis treści)
+            structure_titles = []
+            title_matches = re.findall(
+                r'^(?:[ \t]*)(?:THE\s+(?:TRAGEDY|COMEDY|LIFE|FIRST|SECOND|THIRD)\s+OF\s+[A-Z\s,]+|'
+                r'Rozdział\s+[IVXLCDM\d]+[^\n]*|Tom\s+[IVXLCDM\d]+[^\n]*|Chapter\s+[IVXLCDM\d]+[^\n]*|'
+                r'Akt\s+[IVXLCDM\d]+[^\n]*|ACT\s+[IVXLCDM\d]+[^\n]*)',
+                cleaned_text,
+                flags=re.MULTILINE
+            )
+            for tm in title_matches[:15]:
+                t_clean = tm.strip()
+                if 5 < len(t_clean) < 80 and t_clean not in structure_titles:
+                    structure_titles.append(t_clean)
+
+            if len(structure_titles) >= 3:
+                struct_fact = f"Struktura dokumentu {source_name} obejmuje m.in.: {', '.join(structure_titles[:8])}."
+                extracted_facts.append(struct_fact)
+                self.ingestion_facts_count += 1
+                if on_fact_callback:
+                    on_fact_callback(struct_fact)
+
+            # 2. Podział na akapity i makro-bloki
             paragraphs = [p.strip() for p in cleaned_text.split('\n\n') if len(p.strip()) > 25]
             if not paragraphs:
-                return []
+                return extracted_facts
 
-            # Zbuduj makro-bloki po ok. 2200 znaków
             macro_chunks = []
-            chunk_size = 2200
+            chunk_size = 2800
             cur = ""
             for p in paragraphs:
                 if len(cur) + len(p) < chunk_size:
@@ -278,39 +362,53 @@ class DualCognitiveEngine:
             if cur.strip():
                 macro_chunks.append(cur.strip())
 
-            # Wybierz do 4 najważniejszych przekrojowych fragmentów dokumentu
-            if len(macro_chunks) <= 4:
+            # 3. Dynamiczne pokrycie rozpiętości 100% dokumentu
+            if len(macro_chunks) <= 20:
                 selected_chunks = macro_chunks
             else:
-                selected_chunks = [
-                    macro_chunks[0],
-                    macro_chunks[len(macro_chunks) // 3],
-                    macro_chunks[2 * len(macro_chunks) // 3],
-                    macro_chunks[-1]
-                ]
+                # Dla wielkich woluminów wybierz 28 równomiernie rozłożonych okien na całej osi czasu
+                target_chunks = min(28, len(macro_chunks))
+                step = len(macro_chunks) / target_chunks
+                indices = [int(i * step) for i in range(target_chunks)]
+                seen_idx = set()
+                selected_chunks = []
+                for idx in indices:
+                    i_clamped = min(idx, len(macro_chunks) - 1)
+                    if i_clamped not in seen_idx:
+                        seen_idx.add(i_clamped)
+                        selected_chunks.append(macro_chunks[i_clamped])
 
-            extracted_facts = []
+            self.ingestion_total = len(selected_chunks)
+            print(f"  [Cognitive OS] Starting assimilation of '{source_name}': {len(selected_chunks)} chunks across {len(full_text):,} chars...")
 
-            # 1. Głęboka destylacja semantyczna przez model Kory LLaMA-3-8B (gdy załadowany)
-            if self.cortex_model is not None and self.cortex_tok is not None:
-                try:
-                    for chunk in selected_chunks:
+            # 4. Asymilacja kolejnych bloków
+            for step_i, chunk in enumerate(selected_chunks):
+                self.ingestion_step = step_i + 1
+                self.ingestion_progress = int(((step_i + 1) / len(selected_chunks)) * 100)
+                self.ingestion_status = f"Asymilacja {source_name} ({self.ingestion_progress}%)..."
+
+                new_chunk_facts = []
+
+                if self.cortex_model is not None and self.cortex_tok is not None:
+                    try:
                         with self.preemption_lock:
                             prompt_messages = [
                                 {
                                     "role": "system",
                                     "content": (
-                                        "Jesteś precyzyjnym modułem kognitywnym asystenta. Przeanalizuj poniższy fragment tekstu "
-                                        "i wyodrębnij z niego od 3 do 5 kluczowych, merytorycznych faktów (definicje, tezy, dane liczbowe, rynki, strategie). "
-                                        "Każdy fakt zapisz w nowej linii zaczynając od myślnika '- '. "
-                                        "Pisz wyłącznie pełnymi, poprawnymi gramatycznie zdaniami w języku polskim. "
-                                        "Uzupełnij kontekstowo urwane słowa ze slajdów. "
-                                        "Żadnych wstępów ani komentarzy pobocznych."
+                                        "Jesteś modułem kognitywnym asymilacji wiedzy w architekturze pamięci roboczej Baddeleya. "
+                                        "Przeanalizuj poniższy fragment tekstu i wyodrębnij z niego od 2 do 4 najważniejszych faktów merytorycznych lub wątków "
+                                        "(postaci i ich role, kluczowe wydarzenia fabularne, tezy, relacje, dane liczbowe, definicje lub wnioski).\n"
+                                        "ZASADY:\n"
+                                        "1. Każdy fakt zapisz w osobnej linii zaczynając od myślnika '- '.\n"
+                                        "2. Pisz wyłącznie w języku polskim, pełnymi, poprawnymi gramatycznie zdaniami.\n"
+                                        "3. Ignoruj szum redakcyjny, numery stron, prawa autorskie i formułki wydawnicze.\n"
+                                        "4. Żadnych wstępów, komentarzy ani podsumowań — wygeneruj tylko listę faktów."
                                     )
                                 },
                                 {
                                     "role": "user",
-                                    "content": f"DOKUMENT: {source_name}\n\n{chunk[:2200]}"
+                                    "content": f"DOKUMENT: {source_name} [Część {step_i+1}/{len(selected_chunks)}]:\n\n{chunk[:2600]}"
                                 }
                             ]
                             prompt = self.cortex_tok.apply_chat_template(prompt_messages, tokenize=False, add_generation_prompt=True)
@@ -319,32 +417,47 @@ class DualCognitiveEngine:
                             with torch.no_grad():
                                 out_ids = self.cortex_model.generate(
                                     **inputs,
-                                    max_new_tokens=180,
+                                    max_new_tokens=140,
                                     do_sample=False,
                                     pad_token_id=self.cortex_tok.pad_token_id
                                 )
                             response = self.cortex_tok.decode(out_ids[0][inputs.input_ids.shape[1]:], skip_special_tokens=True)
 
                             for line in response.splitlines():
-                                l = line.strip()
-                                if l.startswith("-") or l.startswith("•") or l.startswith("*") or (len(l) > 2 and re.match(r"^\d+[\.\)\:]", l)):
-                                    clean_fact = re.sub(r"^([-•*]|\d+[\.\)\:])\s*", "", l).strip()
-                                    if len(clean_fact) > 15 and clean_fact not in extracted_facts:
-                                        extracted_facts.append(clean_fact)
-                except Exception as e:
-                    print(f"  [Cognitive OS] Neural distillation note: {e}. Using high-salience fallback.")
+                                raw_l = line.strip()
+                                if not raw_l:
+                                    continue
+                                clean_f = re.sub(r"^([-•*~]|\d+[\.\)\:])\s*", "", raw_l).strip()
+                                if self.is_valid_fact(clean_f):
+                                    if not any(clean_f.lower() in ef.lower() or ef.lower() in clean_f.lower() for ef in extracted_facts):
+                                        new_chunk_facts.append(clean_f)
+                    except Exception as e:
+                        print(f"  [Cognitive OS] Neural distillation note on chunk {step_i+1}: {e}")
 
-            # 2. Szybki, odporny ekstraktor pełnych zdań jako fallback lub uzupełnienie
-            if len(extracted_facts) < 4:
-                for chunk in macro_chunks[:6]:
-                    sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', chunk) if len(s.strip()) > 35]
+                # Fallback: jeśli model nie wygenerował faktów dla tego bloku (lub w trybie testowym)
+                if not new_chunk_facts:
+                    sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', chunk) if len(s.strip()) > 25 and self.is_valid_fact(s.strip())]
                     for s in sentences[:3]:
-                        if not any(s in existing for existing in extracted_facts):
-                            extracted_facts.append(s)
+                        if not any(s.lower() in ef.lower() or ef.lower() in s.lower() for ef in extracted_facts):
+                            new_chunk_facts.append(s)
 
-            return extracted_facts[:35]
+                for f in new_chunk_facts:
+                    extracted_facts.append(f)
+                    self.ingestion_facts_count += 1
+                    if on_fact_callback:
+                        on_fact_callback(f)
+
+            print(f"  [Cognitive OS] ✓ Assimilation completed for '{source_name}': {len(extracted_facts)} clean facts distilled.")
+            return extracted_facts
         finally:
             self.hippo_active = False
+            self.is_ingesting = False
+            self.ingestion_progress = 100
+            self.ingestion_status = f"Zakończono: {len(extracted_facts)} faktów w pamięci."
+
+    def distill_document_chunks(self, full_text: str, source_name: str) -> List[str]:
+        """Synchroniczny interfejs kompatybilny wstecznie z testami jednostkowymi."""
+        return self.distill_document_stream(full_text, source_name)
 
     # ── Executive Cortex Interactive Query (Preemption) ───────────────────────
 
@@ -443,7 +556,7 @@ BASE_DIR = Path(__file__).parent
 
 class AssistantApplication:
     def __init__(self, model_choice: str = "8b"):
-        self.wm = BaddeleyWorkingMemoryStore(max_assertions=80)
+        self.wm = BaddeleyWorkingMemoryStore(max_assertions=120)
         self.engine = DualCognitiveEngine(base_dir=BASE_DIR, model_choice=model_choice)
         self.chat_history: List[Dict[str, str]] = []
         self.clipboard_monitor_active = False
@@ -456,6 +569,29 @@ class AssistantApplication:
 
     def start(self):
         threading.Thread(target=self.engine.initialize_both_models, daemon=True).start()
+
+    def start_background_ingestion(self, text: str, source_name: str, source_type: str = "file"):
+        """Uruchamia asymilację dokumentu w osobnym wątku roboczym bez blokowania interfejsu."""
+        def _worker():
+            try:
+                # Zarejestruj źródło
+                asyncio.run(self.wm.add_source(source_name, len(text), source_type))
+
+                # Callback przekazujący każdy wyekstrahowany fakt na żywo do pamięci roboczej
+                def _on_fact(f: str):
+                    asyncio.run(self.wm.store_assertions([f], source=source_name))
+
+                self.engine.distill_document_stream(
+                    full_text=text,
+                    source_name=source_name,
+                    on_fact_callback=_on_fact
+                )
+            except Exception as e:
+                print(f"  [Cognitive OS] Background ingestion exception: {e}")
+
+        t = threading.Thread(target=_worker, daemon=True)
+        t.start()
+        return t
 
     def toggle_clipboard(self, active: bool) -> bool:
         if pyperclip is None:
@@ -495,10 +631,18 @@ class AssistantApplication:
             "is_ready": self.engine.is_ready,
             "is_preempted": self.engine.is_preempted,
             "preemption_count": self.engine.preemption_count,
-            "hippo_active": self.engine.hippo_active,
+            "hippo_active": self.engine.hippo_active or self.engine.is_ingesting,
             "clipboard_active": self.clipboard_monitor_active,
             "model_label": self.engine.model_label,
             "model_desc": self.engine.model_desc,
+            "ingestion": {
+                "active": self.engine.is_ingesting,
+                "percent": self.engine.ingestion_progress,
+                "step": self.engine.ingestion_step,
+                "total": self.engine.ingestion_total,
+                "status_text": self.engine.ingestion_status,
+                "facts_found": self.engine.ingestion_facts_count,
+            }
         }
 
 
@@ -552,15 +696,12 @@ async def api_ingest_text(req: TextIngestRequest):
         return JSONResponse(status_code=400, content={"error": "Brak tekstu do wgrania"})
     
     src_name = req.source_name or "Wklejona notatka"
-    facts = assistant.engine.distill_document_chunks(req.text, src_name)
-    await assistant.wm.store_assertions(facts, source=src_name)
-    await assistant.wm.add_source(src_name, len(req.text), "text")
+    assistant.start_background_ingestion(req.text, src_name, "text")
     return {
         "ok": True,
         "source_name": src_name,
         "chars": len(req.text),
-        "facts_extracted": len(facts),
-        "message": f"Kora przeanalizowała materiał i zapisała {len(facts)} faktów w pamięci roboczej."
+        "message": f"Wklejono treść ({len(req.text):,} znaków). Kora asymiluje materiał w tle."
     }
 
 
@@ -592,17 +733,14 @@ async def api_upload_file(file: UploadFile = File(...)):
     if not extracted_text.strip():
         return JSONResponse(status_code=400, content={"error": "Plik jest pusty"})
 
-    # Ingest through Hippocampus
-    facts = assistant.engine.distill_document_chunks(extracted_text, filename)
-    await assistant.wm.store_assertions(facts, source=filename)
-    await assistant.wm.add_source(filename, len(extracted_text), "file")
+    # Launch background continuous assimilation
+    assistant.start_background_ingestion(extracted_text, filename, "file")
     
     return {
         "ok": True,
         "filename": filename,
         "chars": len(extracted_text),
-        "facts_extracted": len(facts),
-        "message": f"Kora przeanalizowała dokument ({len(extracted_text)} znaków) i zasiliła pamięć roboczą o {len(facts)} faktów."
+        "message": f"Wgrano {filename} ({len(extracted_text):,} znaków). Kora asymiluje materiał w tle."
     }
 
 
@@ -745,6 +883,24 @@ HTML_FRONTEND = """<!DOCTYPE html>
         <div id="uploadTitle" class="text-xs font-medium text-slate-200">Wgraj dokument (PDF, TXT, MD)</div>
         <div id="uploadSubtitle" class="text-[11px] text-slate-400 mt-1">Kliknij tutaj lub upuść plik</div>
       </label>
+
+      <!-- Live Ingestion Progress Card -->
+      <div id="ingestionProgressBox" class="hidden bg-sky-950/80 border border-sky-600/80 rounded-xl p-3 space-y-2">
+        <div class="flex justify-between items-center text-xs">
+          <span class="font-medium text-sky-200 flex items-center gap-1.5">
+            <span class="w-2 h-2 rounded-full bg-sky-400 animate-ping"></span>
+            <span id="ingestStatusText">Asymilacja w tle...</span>
+          </span>
+          <span id="ingestPercentText" class="font-mono text-sky-300 font-bold">0%</span>
+        </div>
+        <div class="w-full bg-slate-900 rounded-full h-2 overflow-hidden border border-slate-700">
+          <div id="ingestProgressBar" class="bg-gradient-to-r from-sky-500 to-emerald-400 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
+        </div>
+        <div class="flex justify-between items-center text-[10px] text-slate-400 font-mono">
+          <span id="ingestStepsText">Fragment: 0 / 0</span>
+          <span id="ingestFactsFoundText" class="text-emerald-400 font-bold">0 faktów</span>
+        </div>
+      </div>
 
       <!-- Quick Paste Context Area -->
       <div class="space-y-1.5">
@@ -971,6 +1127,26 @@ HTML_FRONTEND = """<!DOCTYPE html>
           }
         }
 
+        // Ingestion progress
+        const pBox = document.getElementById('ingestionProgressBox');
+        if (data.telemetry && data.telemetry.ingestion && data.telemetry.ingestion.active) {
+          pBox.classList.remove('hidden');
+          const ing = data.telemetry.ingestion;
+          document.getElementById('ingestStatusText').innerText = ing.status_text || 'Asymilacja w tle...';
+          document.getElementById('ingestPercentText').innerText = `${ing.percent}%`;
+          document.getElementById('ingestProgressBar').style.width = `${ing.percent}%`;
+          document.getElementById('ingestStepsText').innerText = `Blok: ${ing.step} / ${ing.total}`;
+          document.getElementById('ingestFactsFoundText').innerText = `${data.memory.assertion_count} faktów`;
+
+          if (!isCortexRunning) {
+            const cBadge = document.getElementById('cortexBadge');
+            cBadge.className = 'flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-950/80 border border-amber-600 text-amber-300';
+            cBadge.innerHTML = `<span class="w-2 h-2 rounded-full bg-amber-400 animate-spin"></span> ${currentModelLabel} (Destyluje: ${ing.percent}%)`;
+          }
+        } else {
+          pBox.classList.add('hidden');
+        }
+
         // RAM & Device
         document.getElementById('ramUsage').innerText = `RAM: ${data.telemetry.ram_rss_mb} MB`;
         document.getElementById('deviceBadge').innerText = data.telemetry.device;
@@ -1130,10 +1306,9 @@ HTML_FRONTEND = """<!DOCTYPE html>
       const iconEl = document.getElementById('uploadIcon');
 
       const originalTitle = 'Wgraj dokument (PDF, TXT, MD)';
-      titleEl.innerText = `Analiza: ${file.name.substring(0, 16)}...`;
-      subEl.innerText = 'Kora destyluje fakty do pamięci...';
+      titleEl.innerText = `Przesyłanie: ${file.name.substring(0, 16)}...`;
+      subEl.innerText = 'Przygotowywanie asymilacji...';
       iconEl.innerText = '⏳';
-      setCortexDistilling(true);
 
       const formData = new FormData();
       formData.append('file', file);
@@ -1142,20 +1317,20 @@ HTML_FRONTEND = """<!DOCTYPE html>
         const res = await fetch('/api/upload_file', { method: 'POST', body: formData });
         const data = await res.json();
         if (data.ok) {
-          titleEl.innerText = '✓ Zaasymilowano pomyślnie!';
-          subEl.innerText = `${Math.round(data.chars / 1000)}k zn., ${data.facts_extracted} faktów`;
-          iconEl.innerText = '✅';
+          titleEl.innerText = '✓ Plik przesłany!';
+          subEl.innerText = `Asymilacja w tle (${Math.round(data.chars / 1000)}k zn.)...`;
+          iconEl.innerText = '⚡';
 
           // Add visible confirmation card directly into chat (Kora remains asleep!)
           const chatContainer = document.getElementById('chatContainer');
           const noticeDiv = document.createElement('div');
-          noticeDiv.className = 'bg-emerald-950/50 border border-emerald-700/80 p-3.5 rounded-2xl max-w-xl text-xs text-emerald-200 mx-auto text-center space-y-1 my-2';
+          noticeDiv.className = 'bg-sky-950/50 border border-sky-700/80 p-3.5 rounded-2xl max-w-xl text-xs text-sky-200 mx-auto text-center space-y-1 my-2';
           noticeDiv.innerHTML = `
-            <div class="font-bold text-emerald-300 flex items-center justify-center gap-1.5">
-              <span>📄</span> Zaasymilowano dokument: ${escapeHtml(data.filename)}
+            <div class="font-bold text-sky-300 flex items-center justify-center gap-1.5">
+              <span>📄</span> Wgrano materiał: ${escapeHtml(data.filename)}
             </div>
-            <div class="text-[11px] text-emerald-400">
-              Kora przeanalizowała treść i zapisała <strong>${data.facts_extracted} kluczowych faktów</strong> (${Math.round(data.chars / 1000)}k znaków) w pamięci roboczej Hipokampa. Kora jest w uśpieniu i czeka na Twoje pytania.
+            <div class="text-[11px] text-sky-300">
+              Rozpoczęto asymilację ${Math.round(data.chars / 1000)}k znaków w tle. Pasek postępu i nowe fakty pojawiają się na żywo w lewym panelu. Możesz już zadawać pytania!
             </div>
           `;
           chatContainer.appendChild(noticeDiv);
@@ -1165,7 +1340,7 @@ HTML_FRONTEND = """<!DOCTYPE html>
             titleEl.innerText = 'Wgraj kolejny dokument';
             subEl.innerText = 'Kliknij tutaj lub upuść plik';
             iconEl.innerText = '📄';
-          }, 4000);
+          }, 3500);
 
           await refreshState();
         } else {
@@ -1179,7 +1354,6 @@ HTML_FRONTEND = """<!DOCTYPE html>
         titleEl.innerText = originalTitle;
         iconEl.innerText = '📄';
       } finally {
-        setCortexDistilling(false);
         document.getElementById('fileInput').value = '';
       }
     }
@@ -1199,8 +1373,7 @@ HTML_FRONTEND = """<!DOCTYPE html>
       const text = input.value.trim();
       if (!text) return;
       input.value = '';
-      input.placeholder = 'Kora analizuje notatkę i zapisuje fakty...';
-      setCortexDistilling(true);
+      input.placeholder = 'Kora asymiluje notatkę w tle...';
 
       try {
         const res = await fetch('/api/ingest_text', {
@@ -1215,20 +1388,20 @@ HTML_FRONTEND = """<!DOCTYPE html>
           noticeDiv.className = 'bg-sky-950/50 border border-sky-700/80 p-3 rounded-2xl max-w-xl text-xs text-sky-200 mx-auto text-center space-y-1 my-2';
           noticeDiv.innerHTML = `
             <div class="font-bold text-sky-300 flex items-center justify-center gap-1.5">
-              <span>📝</span> Zaasymilowano notatkę (${data.chars} znaków)
+              <span>📝</span> Wklejono treść (${data.chars} znaków)
             </div>
             <div class="text-[11px] text-sky-400">
-              Kora zapisała <strong>${data.facts_extracted} faktów</strong> w pamięci roboczej Hipokampa. Kora czeka na Twoje pytania.
+              Kora rozpoczęła asymilację materiału w tle. Nowe fakty pojawią się w pamięci roboczej.
             </div>
           `;
           chatContainer.appendChild(noticeDiv);
           scrollChat();
+          input.placeholder = 'Wklej dowolny artykuł, umowę lub notatkę (auto-analiza)...';
           await refreshState();
         }
       } catch (err) {
         console.error(err);
       } finally {
-        setCortexDistilling(false);
         input.placeholder = 'Wklej dowolny artykuł, umowę lub notatkę (auto-analiza)...';
       }
     }
