@@ -10,12 +10,16 @@
 \usepackage{tabularx}
 \usepackage{graphicx}
 \usepackage{makecell}
+\usepackage{array}
 \usepackage{microtype}
 \usepackage{hyperref}
 \usepackage{xcolor}
 \usepackage{listings}
 \usepackage{cite}
 \usepackage{enumitem}
+
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
 
 \hypersetup{
     colorlinks=true,
@@ -380,14 +384,18 @@ Furthermore, at the neural tensor level in \texttt{RecurrentMemoryBank} where $M
 \begin{equation}
 \text{RAM}_{Bank} = 2 \times 8 \times 8 \times 128 \times 2 = 32,768 \text{ bytes} = \mathbf{32 \text{ KB}}
 \end{equation}
-yielding a tensor-level compression factor of $\frac{14.38\text{ TB}}{32\text{ KB}} = \mathbf{438,952,636 \times} \ (>4.38 \times 10^8 \times)$.
+yielding a tensor-level compression factor:
+\begin{equation}
+\text{Compression Factor}_{\text{tensor}} = \frac{14.38\text{ TB}}{32\text{ KB}} = \mathbf{438,952,636 \times} \quad (>4.38 \times 10^8 \times)
+\end{equation}
 
 \begin{table*}[t]
 \centering
+\renewcommand{\arraystretch}{1.15}
 \resizebox{\textwidth}{!}{%
 \begin{tabular}{lrrrrr}
 \toprule
-\textbf{Context Length ($N$)} & \textbf{Full KV-Cache} & \textbf{H100 (80GB)} & \textbf{Cognitive Buffer} & \textbf{Neural Slot Bank} & \textbf{Reduction} \\
+\textbf{Context Length ($N$)} & \textbf{Full KV-Cache} & \textbf{H100 (80GB)} & \textbf{Cognitive Buffer} & \textbf{Neural Slot Bank} & \textbf{Reduction Factor} \\
 \midrule
 1,000 (1k)        & $0.13$ GB  & $0.002$ & $78.6$ MB ($0.079$ GB) & $32$ KB & $1.7\times$ \\
 20,000 (20k)      & $2.62$ GB  & $0.033$ & $78.6$ MB ($0.079$ GB) & $32$ KB & $33.3\times$ \\
@@ -407,7 +415,8 @@ We implemented native operating system process memory telemetry using \texttt{ps
 
 \begin{table}[h]
 \centering
-\resizebox{\columnwidth}{!}{%
+\small
+\renewcommand{\arraystretch}{1.15}
 \begin{tabular}{lrrrrr}
 \toprule
 \textbf{Corpus Tier} & \textbf{Tokens} & \textbf{Peak RSS} & \textbf{Post-Eviction} & \textbf{$\Delta\text{RSS}$} & \textbf{Status} \\
@@ -417,8 +426,7 @@ Canonical Works (19 Vol.)  & $10,973,816$  & $652.2$ MB & $652.2$ MB & $+8.0$ MB
 Pure Semantic (0 Digits)   & $109,738,160$ & $703.2$ MB & $703.2$ MB & $+0.1$ MB  & Verified Flat \\
 Alphanumeric Mega-Scale    & $109,738,160$ & $749.8$ MB & $749.8$ MB & $\mathbf{+0.16}$ \textbf{MB} & Verified Flat \\
 \bottomrule
-\end{tabular}%
-}
+\end{tabular}
 \caption{Physical OS Resident Set Size (RSS) profiling across 110M tokens using \texttt{psutil}. Net steady-state growth is under $0.2$~MB across $109.7$M tokens, confirming active eviction.}
 \label{tab:rss_metrics}
 \end{table}
@@ -478,10 +486,24 @@ Table~\ref{tab:master_benchmark} summarizes the master benchmark results. In Tie
 \subsection{Prior Art Comparison Matrix}
 Table~\ref{tab:prior_art} contrasts our architecture against existing approaches.
 
+\subsection{Novelty Demarcation}
+\begin{enumerate}[leftmargin=*]
+    \item \textbf{Quadripartite Functional Specialization:} Unlike homogeneous vector memory (RMT) or text buffers (MemGPT), our architecture separates continuous relational semantics (Sketchpad), literal high-entropy symbols (Phonological Loop), multi-step simulation (Executive), and episodic binding (Episodic Buffer).
+    \item \textbf{Cross-Attention Memory Bank ($M=8$ Slots, 32 KB):} In \texttt{recurrent\_memory\_bank.py}, shared Key and Value tensors are broadcast across all 32 decoder layers without memory duplication, achieving a 32 KB state footprint with layerwise gating.
+    \item \textbf{Two-Tier Evolutionary Deliberation:} In \texttt{evolutionary\_memory\_model.py}, the Executive executes micro-evolution (Draft $\to$ Verify) within each turn and macro-evolution across turns via Markovian gradient truncation.
+    \item \textbf{Honest Delineation: Neural Recurrence vs. Symbolic Distillation:} We enforce a transparent boundary: \textbf{System A} (\texttt{model.py}, \texttt{recurrent\_memory\_bank.py}) is an in-model neural recurrent architecture operating in PyTorch; \textbf{System B} (\texttt{cognitive\_memory\_engine.py}) is an autonomic symbolic text-stream distillation engine operating on CPU. Conflating System B with System A is scientifically invalid. Both achieve $\mathcal{O}(1)$ memory, but at distinct abstraction layers.
+    \item \textbf{Delineation from Linear Attention \cite{katharopoulos2020transformers}:} Linear Attention relies on additive outer products $S_t = S_{t-1} + \phi(K_t)^T V_t$, causing eigenvalue drift, associative saturation, and degradation of literal symbols. Our architecture enforces bounded slot capacity ($K=8$), discrete phonological registers, and deterministic conflict overwrite.
+    \item \textbf{Delineation from StreamingLLM \cite{xiao2023efficient}:} StreamingLLM permanently evicts tokens beyond a rolling window $L_{win}$, resulting in complete amnesia for past context. Baddeley Working Memory retains facts over $100$M+ tokens.
+    \item \textbf{Delineation from KV-Cache Pruning ($H_2O$, SnapKV) \cite{zhang2023h2o,li2024snapkv}:} Attention-score pruning suffers from the retrospective relevance fallacy. High-entropy literals with low initial attention are permanently lost; our Phonological Loop guarantees exact literal retention.
+    \item \textbf{Neuro-Symbolic Variable Binding \& The Marcus Critique \cite{marcus2019rebooting}:} Pure connectionist networks struggle with dynamic variable binding. Our hybrid design couples neural generative fluency (System A) with explicit symbolic entity-relation attribution (System B).
+\end{enumerate}
+
 \begin{table*}[t]
 \centering
+\footnotesize
+\renewcommand{\arraystretch}{1.2}
 \resizebox{\textwidth}{!}{%
-\begin{tabular}{p{2.6cm}p{2.3cm}p{2.3cm}p{2.3cm}p{2.3cm}p{2.3cm}p{3.0cm}}
+\begin{tabular}{L{2.5cm}L{2.2cm}L{2.2cm}L{2.2cm}L{2.2cm}L{2.2cm}L{3.0cm}}
 \toprule
 \textbf{Dimension} & \textbf{RMT} \cite{bulatov2022recurrent} & \textbf{Infini-attn} \cite{munkhdalai2024leave} & \textbf{Linear Attn} \cite{katharopoulos2020transformers} & \textbf{MemGPT} \cite{packer2023memgpt} & \textbf{Mamba} \cite{gu2023mamba} & \textbf{Baddeley WM (Ours)} \\
 \midrule
@@ -499,18 +521,6 @@ Conflict Overwrite & Implicit attention & Additive update ($\Delta M = vk^T$) & 
 \label{tab:prior_art}
 \end{table*}
 
-\subsection{Novelty Demarcation}
-\begin{enumerate}[leftmargin=*]
-    \item \textbf{Quadripartite Functional Specialization:} Unlike homogeneous vector memory (RMT) or text buffers (MemGPT), our architecture separates continuous relational semantics (Sketchpad), literal high-entropy symbols (Phonological Loop), multi-step simulation (Executive), and episodic binding (Episodic Buffer).
-    \item \textbf{Cross-Attention Memory Bank ($M=8$ Slots, 32 KB):} In \texttt{recurrent\_memory\_bank.py}, shared Key and Value tensors are broadcast across all 32 decoder layers without memory duplication, achieving a 32 KB state footprint with layerwise gating.
-    \item \textbf{Two-Tier Evolutionary Deliberation:} In \texttt{evolutionary\_memory\_model.py}, the Executive executes micro-evolution (Draft $\to$ Verify) within each turn and macro-evolution across turns via Markovian gradient truncation.
-    \item \textbf{Honest Delineation: Neural Recurrence vs. Symbolic Distillation:} We enforce a transparent boundary: \textbf{System A} (\texttt{model.py}, \texttt{recurrent\_memory\_bank.py}) is an in-model neural recurrent architecture operating in PyTorch; \textbf{System B} (\texttt{cognitive\_memory\_engine.py}) is an autonomic symbolic text-stream distillation engine operating on CPU. Conflating System B with System A is scientifically invalid. Both achieve $\mathcal{O}(1)$ memory, but at distinct abstraction layers.
-    \item \textbf{Delineation from Linear Attention \cite{katharopoulos2020transformers}:} Linear Attention relies on additive outer products $S_t = S_{t-1} + \phi(K_t)^T V_t$, causing eigenvalue drift, associative saturation, and degradation of literal symbols. Our architecture enforces bounded slot capacity ($K=8$), discrete phonological registers, and deterministic conflict overwrite.
-    \item \textbf{Delineation from StreamingLLM \cite{xiao2023efficient}:} StreamingLLM permanently evicts tokens beyond a rolling window $L_{win}$, resulting in complete amnesia for past context. Baddeley Working Memory retains facts over $100$M+ tokens.
-    \item \textbf{Delineation from KV-Cache Pruning ($H_2O$, SnapKV) \cite{zhang2023h2o,li2024snapkv}:} Attention-score pruning suffers from the retrospective relevance fallacy. High-entropy literals with low initial attention are permanently lost; our Phonological Loop guarantees exact literal retention.
-    \item \textbf{Neuro-Symbolic Variable Binding \& The Marcus Critique \cite{marcus2019rebooting}:} Pure connectionist networks struggle with dynamic variable binding. Our hybrid design couples neural generative fluency (System A) with explicit symbolic entity-relation attribution (System B).
-\end{enumerate}
-
 % -----------------------------------------------------------------------------
 \section{Adversarial Red-Teaming, Vulnerability Analysis \& Mitigations}
 \label{sec:adversarial}
@@ -520,7 +530,8 @@ We executed a zero-trust red-team audit (\texttt{ADVERSARIAL\_AUDIT.md}) with an
 
 \begin{table}[h]
 \centering
-\resizebox{\columnwidth}{!}{%
+\small
+\renewcommand{\arraystretch}{1.15}
 \begin{tabular}{llr}
 \toprule
 \textbf{Attack Surface / Vulnerability Vector} & \textbf{Empirical Status} & \textbf{Severity} \\
@@ -531,8 +542,7 @@ We executed a zero-trust red-team audit (\texttt{ADVERSARIAL\_AUDIT.md}) with an
 4. Out-of-Distribution Vocabulary Drift      & EXPOSED (100.0\%) & HIGH \\
 5. Neural Memory Bank Attention Dilution     & EXPOSED ($>0.999$) & MEDIUM-HIGH \\
 \bottomrule
-\end{tabular}%
-}
+\end{tabular}
 \caption{Adversarial red-team audit summary matrix from \texttt{test\_adversarial\_redteam.py}.}
 \label{tab:redteam}
 \end{table}
@@ -556,7 +566,11 @@ To transition to a robust learning-based architecture, we formulated five mitiga
     \item \textbf{Small-LM Semantic Parser:} Replace regex with an on-device Small Language Model (e.g., SmolLM2-360M-Instruct, Qwen2.5-0.5B-Instruct) emitting validated JSON entity triples, providing invariance to phrasing and syntax.
     \item \textbf{Polarity \& Modal Logic State Filter:} Formal modal filtering:
     \begin{equation}
-    \mathcal{S}_{t+1}(k) = \begin{cases} \Delta_t(k), & \text{if } \text{Modality} = \text{ASSERTED} \land \text{Polarity} = \text{POSITIVE} \\ \emptyset, & \text{if } \text{Modality} = \text{REVOKED} \\ \mathcal{S}_t(k), & \text{if } \text{Modality} \in \{\text{PROPOSED}, \text{REJECTED}\} \end{cases}
+    \mathcal{S}_{t+1}(k) = \begin{cases} 
+    \Delta_t(k), & \text{if } \text{ASSERTED} \land \text{POSITIVE} \\ 
+    \emptyset, & \text{if } \text{REVOKED} \\ 
+    \mathcal{S}_t(k), & \text{if } \text{PROPOSED} \lor \text{REJECTED} 
+    \end{cases}
     \end{equation}
     \item \textbf{Scoped Entity Knowledge Graph:} Replace flat dictionaries with Subject-Predicate-Object graphs to eliminate multi-entity collisions.
     \item \textbf{Entropy-Gated Sparse Attention ($\alpha$-entmax):} In \texttt{RecurrentMemoryBank}, replace dense softmax with $\alpha$-entmax ($\alpha = 1.5$ \cite{peters2019sparse}) to assign exact zeros to distractor tokens, eliminating $\mathcal{O}(1/T)$ dilution.
@@ -589,8 +603,9 @@ We benchmarked the Neural Hippocampus against the adversarial failure modes expo
 
 \begin{table}[h]
 \centering
-\resizebox{\columnwidth}{!}{%
-\begin{tabular}{lp{6.2cm}cc}
+\small
+\renewcommand{\arraystretch}{1.15}
+\begin{tabularx}{\textwidth}{l X c c}
 \toprule
 \textbf{Test ID} & \textbf{Adversarial Scenario} & \textbf{Regex Baseline} & \textbf{SLM Hippocampus} \\
 \midrule
@@ -605,8 +620,7 @@ We benchmarked the Neural Hippocampus against the adversarial failure modes expo
 \midrule
 \textbf{Total}  & \textbf{Overall Adversarial Robustness} & \textbf{4/8 (50.0\%)} & \textbf{8/8 (100.0\%)} \\
 \bottomrule
-\end{tabular}%
-}
+\end{tabularx}
 \caption{Adversarial robustness evaluation: Regex System B baseline vs. Neural Hippocampus (\texttt{SmolLM2-1.7B-Instruct}). The neural sensory layer achieves 100\% recall across all syntax and negation probes.}
 \label{tab:hippocampus_results}
 \end{table}
@@ -630,8 +644,9 @@ Table~\ref{tab:babi_results} reports empirical zero-shot evaluation across five 
 
 \begin{table}[h]
 \centering
-\resizebox{\columnwidth}{!}{%
-\begin{tabular}{llllcc}
+\small
+\renewcommand{\arraystretch}{1.15}
+\begin{tabularx}{\textwidth}{l Y Y l l c}
 \toprule
 \textbf{Task ID} & \textbf{bAbI Task Name} & \textbf{Category} & \textbf{Target} & \textbf{Result} & \textbf{Status} \\
 \midrule
@@ -643,8 +658,7 @@ Table~\ref{tab:babi_results} reports empirical zero-shot evaluation across five 
 \midrule
 \textbf{Total}  & \textbf{bAbI Zero-Shot Accuracy} & & & & \textbf{3/5 (60.0\%)} \\
 \bottomrule
-\end{tabular}%
-}
+\end{tabularx}
 \caption{Empirical evaluation of Bounded Baddeley Working Memory on canonical bAbI / BABILong tasks \cite{weston2015towards,kurilenko2024babilong}. Peak host RAM was flat at $247.3$~MB RSS across all tasks with mean query latency of $991.0$~ms.}
 \label{tab:babi_results}
 \end{table}
