@@ -658,11 +658,7 @@ async def websocket_chat_endpoint(websocket: WebSocket):
             complete_reply = "".join(assistant_accumulated)
             assistant.chat_history.append({"role": "assistant", "content": complete_reply})
 
-            # Re-ingest conversational takeaway into episodic buffer
-            await assistant.wm.store_assertions(
-                [f"Użytkownik zapytał: {user_msg}", f"Kora odpowiedziała: {complete_reply[:140]}"],
-                source="Rozmowa"
-            )
+
 
             await websocket.send_text(json.dumps({
                 "type": "done",
