@@ -354,7 +354,7 @@ For \textbf{Meta-Llama-3-8B-Instruct} ($n_{\text{layers}} = 32, n_{\text{kv\_hea
 \subsection{Unit Conventions and KV-Cache Memory Derivation}
 A persistent source of confusion in the long-context literature is the conflation of SI megabytes (MB~$=10^6$~bytes) with binary mebibytes (MiB~$=2^{20}$~bytes), which introduces an apparent discrepancy of approximately $1.049\times$ between the two unit systems. More critically, dividing a byte count by $10^9$ yields gigabytes (GB), not megabytes (MB)---a label swap of $10^3$. To avoid ambiguity, \textbf{this work uses SI megabytes (MB~$=10^6$~bytes)} throughout.
 
-For an episodic working memory text prompt containing $N_{buffer} = 600$ tokens:
+Assuming a conservative worst-case episodic working memory prompt bound of $N_{buffer} = 600$ tokens (which upper-bounds all observed empirical buffers across Tiers~1--5B, spanning $204$--$561$ tokens, corresponding to $26.7$--$73.6$~MB in Table~\ref{tab:master_benchmark}):
 \begin{equation}
 \text{Total Bytes} = 600 \times 131,072 \text{ bytes} = 78,643,200 \text{ bytes}
 \end{equation}
@@ -369,7 +369,7 @@ Converting $78,643,200$ bytes into standard units:
 \begin{equation}
 0.08 \text{ MB} = 80,000 \text{ bytes} < 131,072 \text{ bytes (KV footprint of a single token)}
 \end{equation}
-The correct SI figure is $78.6$~MB (or equivalently $0.079$~GB). The accurate hardware comparison for a 600-token episodic buffer versus a 109,738,160-token full-context stream is:
+The correct SI figure is $78.6$~MB (or equivalently $0.079$~GB). Assuming this conservative 600-token ceiling (compared to actual empirical buffers of $26.7$--$73.6$~MB), the hardware comparison against a 109,738,160-token full-context stream is:
 \begin{equation}
 \mathbf{78.6\text{ MB } (0.079\text{ GB})} \quad \text{vs} \quad \mathbf{14.04\text{ TB (decimal)} / 14.38\text{ TB (binary)}}
 \end{equation}
@@ -476,7 +476,13 @@ Factual Retrieval Accuracy$^\S$ & \textbf{12/12 (100\%)} & \textbf{5/5 (100\%)} 
 \end{table*}
 
 \subsection{Empirical Results and Qualitative Ingestion Fidelity}
-Table~\ref{tab:master_benchmark} summarizes the master benchmark results. In Tier 3 (Polish Bible, 1.57M tokens), Meta-Llama-3-8B correctly answered all 9 cross-testament queries (e.g., Methuselah's lifespan: 969 years; Ark dimensions: $300\times 50\times 30$ cubits; Judas' betrayal price: 30 pieces of silver; Revelation sealed: 144,000). In Tier 5A (Pure Semantic Mega-Stream, 109.7M tokens, zero digits), the system accurately recalled qualitative facts located at $11\text{M}$, $51\text{M}$, and $105\text{M}$ tokens with 100% accuracy.
+Table~\ref{tab:master_benchmark} summarizes the master benchmark results. In Tier 3 (Polish Bible, 1.57M tokens), Meta-Llama-3-8B correctly answered all 9 cross-testament queries (e.g., Methuselah's lifespan: 969 years; Ark dimensions: $300\times 50\times 30$ cubits; Judas' betrayal price: 30 pieces of silver; Revelation sealed: 144,000). In Tier 5A (Pure Semantic Mega-Stream, 109.7M tokens, zero digits), the system accurately recalled qualitative facts located at $11\text{M}$, $51\text{M}$, and $105\text{M}$ tokens with 100\% accuracy.
+
+\paragraph{Demarcation of Compression Metrics:} Note that Table~\ref{tab:master_benchmark} reports two complementary but mathematically distinct compression metrics:
+\begin{itemize}[leftmargin=*]
+    \item \textbf{Token-Level Compression Ratio ($N_{\text{raw}} / N_{\text{buffer}}$):} Measures the reduction in symbolic sequence length from raw input stream tokens to the compact working memory buffer tokens. At Tier~5B, condensing $109,738,160$ input tokens into a $212$-token episodic buffer yields a symbolic compression ratio of $\mathbf{517,632.8 : 1}$.
+    \item \textbf{Physical KV-Cache Reduction Factor ($\text{RAM}_{\text{full}} / \text{RAM}_{\text{WM}}$):} Measures the physical VRAM savings achieved by allocating KV-cache solely for the active working memory prompt ($27.8$~MB in SI units for Tier~5B) versus hosting the full-sequence dense attention KV-cache ($14.38$~TB on Meta-Llama-3-8B), yielding a hardware reduction factor of $\mathbf{517,266\times}$.
+\end{itemize}
 
 % -----------------------------------------------------------------------------
 \section{Comparative Taxonomy \& Prior Art Delineation}

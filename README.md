@@ -104,8 +104,9 @@ All results below are from **System B (Neural Hippocampus)** pipeline. Factual a
 | **Factual Recall** | 12/12 (100%) | 5/5 (100%) | 9/9 (100%) | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) |
 
 > †Neural SLM latency = full SmolLM2-1.7B semantic distillation, async background daemon.
+>
+> 💡 **Metrics Note:** *Compression Ratio* measures raw input tokens relative to episodic buffer tokens ($N_{\text{raw}} / N_{\text{buffer}}$). *KV-Cache Reduction* measures the physical hardware VRAM footprint savings of hosting only the bounded working memory prompt vs. full-sequence dense attention on Meta-Llama-3-8B.
 
----
 
 ## Standardized Academic Benchmark (bAbI / BABILong)
 
