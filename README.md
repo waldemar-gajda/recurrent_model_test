@@ -1,17 +1,19 @@
 <div align="center">
 
-# Baddeley Cognitive Working Memory: $O(1)$ Context for LLMs
+# Baddeley Cognitive Working Memory: O(1) Context for LLMs
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22768217.svg)](https://doi.org/10.5281/zenodo.22768217)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
-[![Dual License: Commercial](https://img.shields.io/badge/License-Commercial_Dual-purple.svg)](LICENSE)
 [![Python: 3.10+](https://img.shields.io/badge/Python-3.10+-brightgreen.svg)](https://python.org)
-[![arXiv: 2026](https://img.shields.io/badge/arXiv-Preprint-red.svg)](paper.html)
-[![Space: O(1)](https://img.shields.io/badge/Space_Complexity-O(1)_Strict-orange.svg)](#theoretical-guarantees)
-[![Recall: 100%](https://img.shields.io/badge/Factual_Recall-100%25_at_110M-success.svg)](#master-empirical-scaling-benchmark)
+[![Space: O(1)](https://img.shields.io/badge/Space_Complexity-O(1)_Query_Time-orange.svg)](#theoretical-guarantees)
+[![bAbI: 60%](https://img.shields.io/badge/bAbI_Zero--Shot-60%25_(3/5)-yellow.svg)](#standardized-academic-benchmark-babi--babilong)
+[![Proprietary Recall: 100%](https://img.shields.io/badge/Proprietary_Probes-100%25_at_110M_tokens-success.svg)](#master-empirical-scaling-benchmark)
 
 **Bounded Recurrent Working Memory Architectures for Infinite Context Processing in Large Language Models.**
 
-[**Read the Paper (HTML)**](paper.html) • [**LaTeX Source (Overleaf/arXiv)**](paper.tex) • [**Adversarial Audit**](ADVERSARIAL_AUDIT.md) • [**Submission Guide**](ARXIV_SUBMISSION_GUIDE.md)
+*Waldemar Gajda — Independent Researcher*
+
+[**📄 Read the Paper (PDF, Zenodo)**](https://doi.org/10.5281/zenodo.22768217) · [**LaTeX Source**](paper.tex) · [**Adversarial Audit**](ADVERSARIAL_AUDIT.md)
 
 </div>
 
@@ -19,83 +21,109 @@
 
 ## The Problem: The KV-Cache Memory Wall
 
-Dense causal self-attention scales quadratically in compute $\mathcal{O}(N^2)$ and linearly in memory $\mathcal{O}(N)$. For long-context horizons, the Key-Value (KV) cache becomes an impassable hardware barrier:
+Dense causal self-attention scales quadratically in compute O(N²) and linearly in memory O(N). For long-context horizons, the Key-Value (KV) cache becomes a hard hardware barrier:
 
-- Serving a **110 million token stream** on Meta-Llama-3-8B (bfloat16, GQA) requires **$14.04$ to $14.38$ Terabytes** of active VRAM.
-- Hosting this KV-cache for a **single inference stream** requires **176 enterprise NVIDIA H100 (80GB) GPUs** ($>\$5.2\text{M}$ in hardware), dedicated solely to caching past keys and values.
+- Serving a **110 million token stream** on Meta-Llama-3-8B (bfloat16, GQA) requires **14.04–14.38 Terabytes** of active VRAM.
+- This KV-cache for a **single inference stream** requires **176 enterprise NVIDIA H100 (80 GB) GPUs**.
 - Unconstrained context windows suffer from **catastrophic attention dilution**, the **"lost-in-the-middle" effect**, and **multi-hop reasoning breakdown** (NVIDIA RULER, BABILong).
 
 ```
-Full Dense Attention (Linear O(N)):
-Tokens:  1k   ──>   100k  ──>    1.5M   ──>     11M    ──>    110M
-VRAM:  0.13 GB ──> 13.1 GB ──> 200.5 GB ──>   1.44 TB  ──>  14.04 TB (176x H100 GPUs!)
+Full Dense Attention — Linear O(N) memory:
+Tokens:   1k  ──►  100k  ──►   1.5M   ──►    11M    ──►   110M
+VRAM:  0.13 GB ──► 13.1 GB ──► 200.5 GB ──►  1.44 TB ──► 14.04 TB  (176× H100!)
 
-Baddeley Cognitive Working Memory (Strict O(1)):
-Tokens:  1k   ──>   100k  ──>    1.5M   ──>     11M    ──>    110M
-VRAM: 78.6 MB ──> 78.6 MB ──>  70.1 MB ──>   25.5 MB  ──>   26.5 MB (Single Mac / GPU!)
+Baddeley Working Memory — Strict O(1) query memory:
+Tokens:   1k  ──►  100k  ──►   1.5M   ──►    11M    ──►   110M
+VRAM:  78.6 MB ──► 78.6 MB ──►  70.1 MB ──►  25.5 MB ──►  26.5 MB  (Single Mac / GPU)
 ```
+
+> ⚠️ **Important:** Query-time complexity is O(1). Document *ingestion* scales linearly O(T) —
+> at 110M tokens this takes approximately **5.6 days** on Apple Silicon using the Neural Hippocampus.
+> This architecture is designed for offline pre-processing of large corpora, not real-time streaming of arbitrarily long live feeds.
 
 ---
 
 ## The Solution: Alan Baddeley's Quadripartite Working Memory
 
-Human intelligence processes lifelong continuous multi-modal experience ($N \to \infty$) without quadratic memory explosion. Grounded in cognitive psychology (**Baddeley & Hitch, 1974, 2000**) and **Cowan's Capacity Limit ($4 \pm 1$)**, our architecture replaces unbounded linear history with a strictly bounded recurrent state space $\mathcal{S}$:
-
-$$\mathcal{S} = \langle \mathcal{S}_{visuo}, \mathcal{S}_{phon}, \mathcal{S}_{exec}, \mathcal{S}_{ep} \rangle$$
+Grounded in cognitive psychology (**Baddeley & Hitch, 1974, 2000**) and **Cowan's Capacity Limit (4 ± 1)**, the architecture replaces unbounded linear history with a strictly bounded recurrent state space S:
 
 ```
-       ┌──────────────────────────────────────────────────────────┐
-       │                   CENTRAL EXECUTIVE                      │
-       │     (Attentional Control, Routing, Multi-Step Delib.)    │
-       └──────────────┬────────────────────────────┬──────────────┘
+S = ⟨S_visuo,  S_phon,  S_exec,  S_ep⟩
+
+       ┌──────────────────────────────────────────────────┐
+       │              CENTRAL EXECUTIVE (P=4)             │
+       │   Attentional Control · Multi-Step Deliberation  │
+       └──────────────┬───────────────────────────────────┘
+                      │
+         ┌────────────▼────────────┐  ┌────────────────────────┐
+         │  VISUOSPATIAL SKETCHPAD │  │    PHONOLOGICAL LOOP   │
+         │  K=8 continuous slots   │  │  L_sym ≤ 16 exact tok  │
+         │  ~32 KB, semantic rels  │  │  32 bytes, literals    │
+         └────────────┬────────────┘  └────────────┬───────────┘
                       │                            │
-         ┌────────────▼────────────┐  ┌────────────▼────────────┐
-         │  VISUOSPATIAL SKETCHPAD │  │    PHONOLOGICAL LOOP    │
-         │  (Continuous Semantics, │  │   (Discrete Alphanumeric│
-         │   Relational Slots, K=8)│  │    Registers, L_sym<=16)│
-         └────────────┬────────────┘  └────────────┬────────────┘
-                      │                            │
-                      └────────────┬───────────────┘
-                                   │
-                      ┌────────────▼────────────┐
-                      │     EPISODIC BUFFER     │
-                      │  (Multimodal Binding,   │
-                      │   Active Context C<=28) │
-                      └────────────┬────────────┘
-                                   │
-                                   ▼
-                      [ Autoregressive Causal LLM ]
+                      └──────────────┬─────────────┘
+                                     │
+                       ┌─────────────▼──────────────┐
+                       │       EPISODIC BUFFER       │
+                       │  Multimodal binding, C ≤ 28 │
+                       └─────────────┬──────────────┘
+                                     ▼
+                        [ Autoregressive Causal LLM ]
 ```
 
-1. **Visuospatial Sketchpad ($\mathcal{S}_{visuo}$):** $K=8$ continuous scene slots ($\approx 32$~KB) updated via Perceiver cross-attention and SwiGLU gating.
-2. **Phonological Loop ($\mathcal{S}_{phon}$):** Discrete symbol register ($L_{sym} \le 16$ tokens, $32$~bytes) protecting high-entropy literals (IBANs, hashes, citations) from vector quantization blur.
-3. **Central Executive ($\mathcal{S}_{exec}$):** Deliberation tokens ($P=4$) executing draft-verify mental simulation.
-4. **Episodic Buffer ($\mathcal{S}_{ep}$):** Bounded multimodal binding state ($C \le 28$ tokens in neural mode; $250 - 650$ tokens in symbolic distillation mode).
+---
+
+## System A vs. System B — Two Distinct Implementations
+
+This repository contains two architecturally distinct systems. They are **not interchangeable** and are documented separately throughout the paper.
+
+| | **System A: Neural Recurrence** | **System B: Neural Hippocampus** |
+|---|---|---|
+| **Files** | `model.py`, `recurrent_memory_bank.py` | `cognitive_memory_engine.py`, `hippocampus_slm_distiller.py` |
+| **How it works** | Differentiable cross-attention slot pooling inside the PyTorch graph | On-device SLM (SmolLM2-1.7B) extracts JSON triples → bounded text buffer → frozen LLM |
+| **Memory** | 32 KB slot bank (neural tensors) | ~78.6 MB KV-cache for 300–650 token prompt |
+| **Status** | Implemented & unit-tested; trained checkpoints not publicly released | Fully operational; all 110M-token benchmarks use this pipeline |
+| **Empirical data** | Forward/backward pass verified (see `test_model.py`) | Tables 3, 6, 7 in paper |
 
 ---
 
 ## Master Empirical Scaling Benchmark
 
-We validated the architecture across five corpus tiers spanning $1.6\times 10^3$ to $1.097\times 10^8$ streaming tokens:
+All results below are from **System B (Neural Hippocampus)** pipeline. Factual accuracy is measured on **5–12 task-specific retrieval questions per tier** (proprietary probes — see bAbI section below for standardized evaluation).
 
-| Metric | Tier 1: Legal M&A | Tier 2: Scaled Boilerplate | Tier 3: 66-Book Bible | Tier 4: World Canon (19 Vol) | Tier 5A: Pure Semantic | Tier 5B: Alphanumeric |
+| Metric | Tier 1: M&A | Tier 2: Boilerplate | Tier 3: Bible (1.5M) | Tier 4: Canon (11M) | Tier 5A: Semantic (110M) | Tier 5B: Alphanumeric |
 |:---|:---:|:---:|:---:|:---:|:---:|:---:|
-| **Cumulative Tokens** | $1,600$ | $20,000$ | $1,567,226$ | $10,973,816$ | $109,738,160$ | $109,738,160$ |
-| **Stream Chunks / Books** | 1 doc | 60 sections | 66 books | 19 volumes | 190 chunks | 190 chunks |
-| **Working Memory Buffer** | $371$ tok | $371$ tok | $561$ tok | $204$ tok | $293$ tok | $212$ tok |
-| **State Compression Ratio** | $3.6 : 1$ | $53.9 : 1$ | $2,793.6 : 1$ | $53,793.2 : 1$ | $374,532.9 : 1$ | **$517,632.8 : 1$** |
-| **Symbolic Stream Time**† | $<0.05$ s | $0.08$ s | $0.52$ s | $0.61$ s | $1.81$ s | $1.83$ s |
-| **Symbolic CPU Throughput**† | $> 30\text{k}$ tok/s | $> 250\text{k}$ tok/s | $3.01\text{M}$ tok/s | $17.9\text{M}$ tok/s | $60.6\text{M}$ tok/s | **$59.9\text{M}$ tok/s** |
-| **Neural SLM Ingestion Latency**‡ | $\approx 2.3$ s | $\approx 45$ s | $\approx 1.9$ h (async) | $\approx 13.5$ h (async) | $\approx 5.6$ d (async) | $\approx 5.6$ d (async) |
-| **Peak Host RSS** | $312.4$ MB | $315.8$ MB | $608.3$ MB | $652.2$ MB | $703.2$ MB | $749.8$ MB |
-| **Net $\Delta\text{RSS}$ Growth** | $+0.0$ MB | $+0.1$ MB | $+44.9$ MB | $+8.0$ MB | $+0.1$ MB | **$+0.16$ MB** |
-| **Working Memory KV-Cache** | $46.4$ MB | $46.4$ MB | $70.1$ MB | $25.5$ MB | $36.6$ MB | $26.5$ MB |
-| **Full Attention KV-Cache** | $0.17$ GB | $2.62$ GB | $205.4$ GB | $1.44$ TB | $14.38$ TB | **$14.38$ TB** |
-| **KV-Cache Reduction Factor** | $3.6\times$ | $53.9\times$ | $2,930\times$ | $56,470\times$ | $392,896\times$ | **$542,641\times$** |
-| **Executive Reasoning Model** | LLaMA-3-8B | LLaMA-3-8B | LLaMA-3-8B | LLaMA-3-8B | LLaMA-3-8B | LLaMA-3-8B |
-| **Factual Recall Accuracy** | **12/12 (100%)** | **5/5 (100%)** | **9/9 (100%)** | **5/5 (100%)** | **5/5 (100%)** | **5/5 (100%)** |
+| **Cumulative Tokens** | 1,600 | 20,000 | 1,567,226 | 10,973,816 | 109,738,160 | 109,738,160 |
+| **Working Memory Buffer** | 371 tok | 371 tok | 561 tok | 204 tok | 293 tok | 212 tok |
+| **Compression Ratio** | 3.6:1 | 53.9:1 | 2,793:1 | 53,793:1 | 374,533:1 | **517,633:1** |
+| **Neural SLM Ingestion**† | ~2.3 s | ~45 s | ~1.9 h | ~13.5 h | ~5.6 **days** | ~5.6 **days** |
+| **Net ΔRSS Growth** | +0.0 MB | +0.1 MB | +44.9 MB | +8.0 MB | +0.1 MB | **+0.16 MB** |
+| **Full Attention KV-Cache** | 0.17 GB | 2.62 GB | 205.4 GB | 1.44 TB | 14.38 TB | **14.38 TB** |
+| **KV-Cache Reduction** | 3.6× | 53.9× | 2,930× | 56,470× | 392,896× | **542,641×** |
+| **Factual Recall** | 12/12 (100%) | 5/5 (100%) | 9/9 (100%) | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) |
 
-> **Note on Compute-Memory Decoupling:** The raw $59.9\text{M}$ tokens/sec rate reflects the lightweight CPU lexical pre-filter (System B heuristic) scanning text at byte level. Full neural semantic processing (SmolLM2-1.7B, Section 7) respects the physical laws of linear compute $\mathcal{O}(T)$ ($\approx 2.28$ s per 512-token chunk). The breakthrough is **Compute-Memory Decoupling**: we exchange an impossible $\mathcal{O}(N)$ memory barrier ($14.38\text{ TB}$ VRAM, $176\times$ H100 GPUs) for a tractable linear $\mathcal{O}(T)$ background pipeline on an on-device 1.7B model, maintaining strict $\mathcal{O}(1)$ working memory while the 8B model sleeps until queried.
+> †Neural SLM latency = full SmolLM2-1.7B semantic distillation, async background daemon.
+
+---
+
+## Standardized Academic Benchmark (bAbI / BABILong)
+
+To ensure comparability against published literature, we evaluated on **5 selected tasks** from the Meta AI [bAbI suite](https://research.fb.com/downloads/babi/) (zero-shot, no fine-tuning):
+
+| Task | Category | Target | Result | Status |
+|---|---|---|---|---|
+| bAbI-1: Single Supporting Fact | Single-Hop Location | `office` | `Office` | ✅ PASS |
+| bAbI-2: Two Supporting Facts | Two-Hop Chaining | `garden` | `kitchen` | ❌ FAIL |
+| bAbI-3: Three Supporting Facts | Three-Hop Movement | `bedroom` | `Bedroom` | ✅ PASS |
+| bAbI-6: Yes/No Polarity | State Verification | `no` | `No` | ✅ PASS |
+| bAbI-8: Lists / Sets | Inventory Binding | `apple, pear` | `Apple` | ⚠️ Partial |
+| **Total** | | | | **3/5 (60%)** |
+
+**Task 2 failure** (2-hop transitive chaining) and **Task 8 partial failure** (inventory sets) represent the known frontier of flat episodic buffers: transitive relational dependencies require explicit graph traversal, not flat key-value storage. This motivates the Subject-Predicate-Object graph extension described in Section 6.4 of the paper.
+
+```bash
+python3 benchmark_babi_suite.py
+```
 
 ---
 
@@ -103,28 +131,47 @@ We validated the architecture across five corpus tiers spanning $1.6\times 10^3$
 
 ### 1. Installation
 ```bash
-git clone https://github.com/cognitive-working-memory/baddeley-cognitive-memory.git
-cd baddeley-cognitive-memory
+git clone https://github.com/waldemargajda/recurrent_model_test.git
+cd recurrent_model_test
 pip install -r requirements.txt
 ```
 
-### 2. Run Reproducible Benchmark Suite
-Verify all empirical tiers and OS memory eviction in $<10$ seconds:
+> **Models required (not included in repo):**
+> - `Meta-Llama-3-8B-Instruct` — download via HuggingFace or Ollama
+> - `SmolLM2-1.7B-Instruct` — download via HuggingFace
+
+### 2. Run Reproducible Benchmark Suite (System B)
+Verifies OS memory eviction across all corpus tiers:
 ```bash
 python3 run_reproducible_benchmarks.py
 ```
 
-### 3. Interactive Working Memory Chat Demo
-Run an interactive session where any document is ingested into $O(1)$ working memory:
+### 3. Run Adversarial Test Suite
 ```bash
-# Using Ollama (Local LLaMA-3)
+python3 test_adversarial_redteam.py
+python3 test_hippocampus_negation.py
+```
+
+### 4. Run Standardized bAbI Evaluation
+```bash
+python3 benchmark_babi_suite.py
+```
+
+### 5. Run System A Unit Tests (forward/backward pass)
+```bash
+pytest test_model.py -v
+```
+
+### 6. Interactive Chat (requires local LLM)
+```bash
+# With Ollama
 python3 demo_cognitive_memory.py --interactive --backend ollama --model llama3
 
-# Using OpenAI or Groq API (Zero local model install)
-export GROQ_API_KEY="your-groq-key"
+# With Groq API
+export GROQ_API_KEY="your-key"
 python3 demo_cognitive_memory.py --interactive --backend groq --model llama-3.1-8b-instant
 
-# Fast Simulation Mode (0.01s, no models needed)
+# Mock mode (no models needed)
 python3 demo_cognitive_memory.py --backend mock
 ```
 
@@ -132,98 +179,75 @@ python3 demo_cognitive_memory.py --backend mock
 
 ## Theoretical Guarantees
 
-- **Theorem 1 (Strict $\mathcal{O}(1)$ Space Complexity):** The working memory state $\mathcal{S}$ is strictly bounded by hyperparameters $K=8, L_{max}=16, P=4, d$. Memory consumption is invariant with sequence length: $\frac{\partial \text{RAM}_{WM}}{\partial T} = 0$.
-- **Theorem 2 (Strict $\mathcal{O}(1)$ Decoding Latency):** Query vectors attend only to $T_{eff} \le C_{max}$ tokens. Generation FLOPs per token are bounded: $\lim_{T \to \infty} \text{FLOPs}_{WM}(T) = \mathcal{O}(1)$.
-- **Theorem 3 (Linear Ingestion Time):** Processing $T$ tokens partitioned into $M$ chunks executes in strictly linear time: $\text{FLOPs}_{total}(T) = \mathcal{O}(T)$, compared to $\mathcal{O}(T^2)$ in standard dense self-attention.
+- **Theorem 1 — O(1) Space Complexity:** The state S is strictly bounded by hyperparameters K=8, L_max=16, P=4. Memory is invariant with sequence length: ∂RAM_WM/∂T = 0.
+- **Theorem 2 — O(1) Query Latency:** Query vectors attend only to T_eff ≤ C_max tokens. FLOPs per generated token are bounded regardless of document length.
+- **Theorem 3 — O(T) Ingestion Time:** Processing T tokens in M chunks is O(T), vs O(T²) for dense self-attention.
+
+> **Note:** Theorems 1 & 2 hold by construction of the bounded buffer. The empirically open question is whether a buffer of this capacity retains sufficient task-relevant information as T → ∞ — which is precisely what the benchmarks above begin to characterize.
 
 ---
 
-## Duality Delineation: System A vs System B
+## Adversarial Evaluation (System B)
 
-To maintain absolute scientific integrity, we explicitly delineate the two systems in this codebase:
+We evaluated the heuristic regex baseline and its successor (Neural Hippocampus) against five vulnerability classes:
 
-- **System A: In-Model Neural Recurrence (`model.py`, `recurrent_memory_bank.py`):**
-  Operates natively within the PyTorch graph. Features learned continuous cross-attention slot pooling, gated bridge residual integration ($b_{init} = -4.0$), and a 32 KB broadcasted slot memory bank across all 32 transformer layers.
-- **System B: Autonomic Symbolic Episodic Distillation (`cognitive_memory_engine.py`):**
-  Operates outside the neural network as an external CPU text-stream processor. Parses multi-million token streams, resolves entity updates via conflict overwrite, and formats a compact episodic buffer ($250 - 650$ tokens) for a frozen foundation model.
+| Attack Surface | Heuristic Regex | Neural Hippocampus (SmolLM2-1.7B) |
+|---|---|---|
+| Distractor Needle Spoofing | ✗ EXPOSED (83.3%) | ✅ PASS |
+| Semantic Paraphrase / Passive Voice | ✗ EXPOSED (84.7%) | ✅ PASS |
+| Negation & Revocation Blindness | ✗ EXPOSED (100%) | ✅ PASS |
+| Out-of-Distribution Domain Drift | ✗ EXPOSED (100%) | ✅ PASS |
+| Memory Bank Attention Dilution | ⚠️ EXPOSED (>0.999 entropy) | Mitigated (α-entmax, see paper §6.4) |
 
-Both achieve $\mathcal{O}(1)$ inference memory, but at fundamentally distinct architectural layers.
+Full methodology: [ADVERSARIAL_AUDIT.md](ADVERSARIAL_AUDIT.md)
 
 ---
 
-## Dual-LLM Neural Architecture: Artificial Sensory Hippocampus (`hippocampus_slm_distiller.py`)
-
-To eliminate heuristic regex-based distillation entirely, the architecture integrates an on-device Small Language Model (**SmolLM2-1.7B-Instruct**) acting as an **Artificial Hippocampus**:
+## Repository Structure
 
 ```
-[Unbounded Text Stream] ──(512 tok chunks)──► [Hippocampus SLM: SmolLM2-1.7B]
-                                                      │ (structured JSON triples)
-                                                      ▼
-                                              [Baddeley Working Memory: O(1)]
-                                                      │ (bounded ~300 tok buffer)
-                                                      ▼
-                                              [Executive Cortex: LLaMA-3-8B]
+├── model.py                      # System A: Differentiable RecurrentMemoryBank (PyTorch)
+├── recurrent_memory_bank.py      # System A: 32 KB cross-attention slot bank
+├── recurrent_bridge.py           # System A: Residual bridge injection
+├── evolutionary_memory_model.py  # System A: Two-tier Draft→Verify deliberation
+│
+├── cognitive_memory_engine.py    # System B: Symbolic episodic distillation engine
+├── hippocampus_slm_distiller.py  # System B: Neural Hippocampus (SmolLM2-1.7B)
+├── async_cognitive_runtime.py    # System B: OS-style preemptive handover scheduler
+│
+├── run_reproducible_benchmarks.py  # Main benchmark (all 5 corpus tiers)
+├── benchmark_babi_suite.py         # Standardized bAbI evaluation
+├── test_adversarial_redteam.py     # Adversarial vulnerability suite
+├── test_hippocampus_negation.py    # Neural Hippocampus negation tests
+├── test_model.py                   # System A unit tests (forward/backward)
+│
+├── data/corpus/                    # Benchmark corpora (public domain texts)
+├── paper.tex                       # LaTeX preprint source
+└── ADVERSARIAL_AUDIT.md           # Full adversarial audit report
 ```
 
-### Adversarial Validation Matrix (`test_hippocampus_negation.py`)
-Evaluating against the failure modes exposed in the red-team audit:
-
-| Adversarial Vulnerability Probe | Heuristic Regex (System B) | Neural Hippocampus (SmolLM2-1.7B) |
-|:---|:---:|:---:|
-| **VM1-B: Distractor Key Spoofing** (`DRAFT-KEY` vs `TITAN-KEY`) | ✗ FAIL (Spoofed) | **✓ PASS** |
-| **VM2-A: Semantic Paraphrase** (*"market capitalization"* &rarr; valuation) | ✗ FAIL (Missed) | **✓ PASS** |
-| **VM2-B: Passive Voice** (*"was agreed upon"*) | ✗ FAIL (Missed) | **✓ PASS** |
-| **VM2-D: Hedged Legal Qualifiers** (confirmation statements) | ✗ FAIL (Missed) | **✓ PASS** |
-| **VM3-A: Explicit Negation** (rejected €15M vs valid €45M) | ✓ PASS | **✓ PASS** |
-| **VM3-B: Complete Revocation** (cancelled tranche evicts state) | ✓ PASS | **✓ PASS** |
-| **VM3-C: Temporal Override** (amendment supersedes baseline) | ✓ PASS | **✓ PASS** |
-| **VM3-E: Modal Conditional** (*"considering… decision pending"*) | ✓ PASS | **✓ PASS** |
-| **Overall Robustness** | **4/8 (50.0%)** | **8/8 (100.0%)** |
-
-- **Inference Latency:** $\approx 2.28$ s/chunk on Apple Silicon (MPS).
-- **Physical Memory:** Strict $\mathcal{O}(1)$ footprint (bounded working memory buffer).
-- Run the test suite: `python3 test_hippocampus_negation.py`
-
-### Operating System Paradigm: Preemptive Handover Runtime (`async_cognitive_runtime.py`)
-To avoid GPU/Unified Memory thrashing on consumer hardware:
-1. **Background Hippocampus Daemon:** Ingests document streams in the background with throttled compute, continuously updating the $O(1)$ Working Memory buffer.
-2. **Sleeping Executive Cortex:** The primary foundation model (LLaMA-3-8B) remains in deep sleep (0 FLOPs, 0 VRAM bandwidth) for 99.9% of the stream.
-3. **Instantaneous Preemption (Collision Resolution):** When a user asks a question, the runtime pauses the Hippocampus ($<0.1$ ms handover), hands 100% memory bus bandwidth to the Cortex to answer from the current Working Memory snapshot in milliseconds, then resumes background ingestion.
-- Run the preemption verification test: `python3 test_async_preemption.py`
+> **Model weights** (`*.pt`, `llama-3-8b-instruct/`, `smollm2-135m-instruct/`) are excluded from this repository — they are either too large for GitHub (>100 MB) or are distributed by Meta / HuggingFace under their own licenses.
 
 ---
 
-## Adversarial Red-Team Audit & Mitigations
+## Citation
 
-We executed an aggressive zero-trust red-team audit ([ADVERSARIAL_AUDIT.md](ADVERSARIAL_AUDIT.md)) exposing critical failure modes in early heuristic prototypes, now fully resolved by the Neural Hippocampus layer and entropy-gated sparse attention.
-
-See Sections 6 & 7 of the [Preprint Paper](paper.html) for full mathematical specifications and ablation studies.
-
----
-
-## Standardized Academic Benchmark (bAbI / BABILong)
-
-We evaluated the architecture on canonical cognitive tracking tasks from the Meta AI **bAbI suite** (Weston et al., 2015) and **BABILong** (Kurilenko et al., 2024):
-- **bAbI-1 (Single Fact Location):** **✓ PASS** (`office`, 950 ms)
-- **bAbI-3 (Three-Hop Displacement):** **✓ PASS** (`bedroom`, 940 ms)
-- **bAbI-6 (Yes/No State Polarity):** **✓ PASS** (`no`, 864 ms)
-- Run the standardized evaluation: `python3 benchmark_babi_suite.py`
-
----
-
-## Citation & Intellectual Property
-
-### Academic Citation (BibTeX)
 ```bibtex
-@article{gajda2026baddeley,
-  title={Bounded Recurrent Cognitive State Spaces for Infinite Context Processing in Large Language Models: An Empirical, Formal, and Adversarial Analysis of Baddeley Working Memory Architectures},
+@misc{gajda2026baddeley,
+  title={Bounded Recurrent Cognitive State Spaces for Infinite Context Processing
+         in Large Language Models: An Empirical, Formal, and Adversarial Analysis
+         of Baddeley Working Memory Architectures},
   author={Gajda, Waldemar},
-  journal={arXiv preprint arXiv:2609.xxxxx},
-  year={2026}
+  year={2026},
+  doi={10.5281/zenodo.22768217},
+  howpublished={Zenodo preprint},
+  url={https://doi.org/10.5281/zenodo.22768217}
 }
 ```
 
-### Dual-Licensing & Patent Strategy
-- **Open-Source / Academic Tier:** Licensed under the [GNU Affero General Public License v3 (AGPLv3)](LICENSE). Section 13 mandates that network-hosted modifications must open-source their full stack.
-- **Commercial Tier & Patent Portfolio:** For proprietary enterprise integration and full details on defensive prior-art publication, see [LEGAL_AND_LICENSING.md](LEGAL_AND_LICENSING.md).
+---
 
+## License
+
+- **Open-Source / Academic:** [GNU Affero General Public License v3 (AGPLv3)](LICENSE) — Section 13 mandates that network-hosted modifications must open-source their full stack.
+- **Commercial:** See [LEGAL_AND_LICENSING.md](LEGAL_AND_LICENSING.md) for dual-licensing and prior-art documentation.

@@ -1,4 +1,4 @@
-# Byte-compiled / optimized / DLL files
+# Byte-compiled / optimized
 __pycache__/
 *.py[cod]
 *$py.class
@@ -8,14 +8,25 @@ __pycache__/
 .coverage
 htmlcov/
 
-# Local Model Weights & Checkpoints (Large Binaries > 100MB)
-*.pt
-*.bin
-*.safetensors
+# ── Large model weights & checkpoints ──────────────────────────────────────
+# These files exist locally but are not committed to the repository.
+# They are either too large for GitHub (>100 MB) or distributed by
+# Meta / HuggingFace under their own licenses.
+#
+# System A — calibrated & seam checkpoints (experimental, superseded)
+llama3_recurrent_seam.pt
+recurrent_fast_calibrated.pt
+smollm_recurrent_calibrated.pt
+llama3_dual_stream.pt
+recurrent_cross_memory.pt
+recurrent_memory_adapter.pt
+hf_ref.pt
+#
+# Downloaded base model directories
 llama-3-8b-instruct/
 smollm2-135m-instruct/
 
-# Environments & OS
+# OS / Environment
 .agents/
 .venv/
 venv/
