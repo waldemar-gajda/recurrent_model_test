@@ -393,18 +393,18 @@ yielding a tensor-level compression factor:
 \resizebox{\textwidth}{!}{%
 \begin{tabular}{lrrrrr}
 \toprule
-\textbf{Context Length ($N$)} & \textbf{Full KV-Cache} & \textbf{H100 (80GB)} & \textbf{Cognitive Buffer} & \textbf{Neural Slot Bank} & \textbf{Reduction Factor} \\
+\textbf{Context Length ($N$)} & \textbf{Full KV-Cache} & \textbf{H100 (80GB)} & \textbf{Cognitive Buffer (SI~MB)} & \textbf{Neural Slot Bank} & \textbf{Reduction Factor} \\
 \midrule
 1,000 (1k)        & $0.13$ GB  & $0.002$ & $78.6$ MB ($0.079$ GB) & $32$ KB & $1.7\times$ \\
 20,000 (20k)      & $2.62$ GB  & $0.033$ & $78.6$ MB ($0.079$ GB) & $32$ KB & $33.3\times$ \\
 100,000 (100k)    & $13.11$ GB & $0.16$  & $78.6$ MB ($0.079$ GB) & $32$ KB & $166.7\times$ \\
-1,530,000 (1.53M) & $200.5$ GB & $2.5$   & $70.1$ MB ($0.070$ GB) & $32$ KB & $2,860\times$ \\
-10,973,816 (11M)  & $1.44$ TB  & $18.0$  & $25.5$ MB ($0.026$ GB) & $32$ KB & $56,470\times$ \\
-109,738,160 (110M)& \textbf{14.38 TB}& \textbf{176.0} & \textbf{26.5--78.6 MB} & \textbf{32 KB} & \textbf{182,900--542,000$\times$} \\
+1,530,000 (1.53M) & $200.5$ GB & $2.5$   & $73.6$ MB ($0.074$ GB) & $32$ KB & $2,724\times$ \\
+10,973,816 (11M)  & $1.44$ TB  & $18.0$  & $26.7$ MB ($0.027$ GB) & $32$ KB & $53,933\times$ \\
+109,738,160 (110M)& \textbf{14.38 TB}& \textbf{176.0} & \textbf{27.8--78.6 MB} & \textbf{32 KB} & \textbf{182,900--517,000$\times$} \\
 \bottomrule
 \end{tabular}%
 }
-\caption{Physical KV-cache memory scaling for Meta-Llama-3-8B (GQA bfloat16, 131,072 bytes/token) comparing uncompressed dense attention against Bounded Cognitive Working Memory.}
+\caption{Physical KV-cache memory scaling for Meta-Llama-3-8B (GQA bfloat16, 131,072 bytes/token) comparing uncompressed dense attention against Bounded Cognitive Working Memory. ``Cognitive Buffer'' column reports the KV-cache of the working memory text prompt in \textbf{SI megabytes} (MB~$=10^6$ bytes); the corresponding binary-unit values (MiB~$=2^{20}$ bytes) are 5.24\% smaller.}
 \label{tab:hardware_scaling}
 \end{table*}
 
@@ -463,9 +463,9 @@ Symbolic Throughput$^\dagger$& $>30$k tok/s & $>250$k tok/s & $3.01$M tok/s  & $
 Neural SLM Latency$^\ddagger$& $\approx 2.3$ s & $\approx 45$ s & $\approx 1.9$ h (async) & $\approx 13.5$ h (async) & $\approx 5.6$ d (async) & $\approx 5.6$ d (async) \\
 Peak Host RSS            & $312.4$ MB    & $315.8$ MB    & $608.3$ MB     & $652.2$ MB     & $703.2$ MB      & $749.8$ MB \\
 Net $\Delta\text{RSS}$ Growth & $+0.0$ MB & $+0.1$ MB    & $+44.9$ MB     & $+8.0$ MB      & $+0.1$ MB       & $\mathbf{+0.16}$ \textbf{MB} \\
-Working Memory KV-Cache  & $46.4$ MB     & $46.4$ MB     & $70.1$ MB      & $25.5$ MB      & $36.6$ MB       & $26.5$ MB \\
+Working Memory KV-Cache (SI~MB) & $48.6$ MB     & $48.6$ MB     & $73.6$ MB      & $26.7$ MB      & $38.4$ MB       & $27.8$ MB \\
 Full Attention KV-Cache  & $0.17$ GB     & $2.62$ GB     & $205.4$ GB     & $1.44$ TB      & $14.38$ TB      & \textbf{14.38 TB} \\
-KV-Cache Reduction Factor& $3.6\times$   & $53.9\times$  & $2,930\times$  & $56,470\times$ & $392,896\times$ & \textbf{542,641$\times$} \\
+KV-Cache Reduction Factor& $3.5\times$   & $53.9\times$  & $2,792\times$  & $53,933\times$ & $374,479\times$ & \textbf{517,266$\times$} \\
 Executive Reasoning Model& LLaMA-3-8B    & LLaMA-3-8B    & LLaMA-3-8B     & LLaMA-3-8B     & LLaMA-3-8B      & LLaMA-3-8B \\
 Factual Retrieval Accuracy$^\S$ & \textbf{12/12 (100\%)} & \textbf{5/5 (100\%)} & \textbf{9/9 (100\%)} & \textbf{5/5 (100\%)} & \textbf{5/5 (100\%)} & \textbf{5/5 (100\%)} \\
 \bottomrule

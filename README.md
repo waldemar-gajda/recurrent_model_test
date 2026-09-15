@@ -34,7 +34,7 @@ VRAM:  0.13 GB ──► 13.1 GB ──► 200.5 GB ──►  1.44 TB ──►
 
 Baddeley Working Memory — Strict O(1) query memory:
 Tokens:   1k  ──►  100k  ──►   1.5M   ──►    11M    ──►   110M
-VRAM:  78.6 MB ──► 78.6 MB ──►  70.1 MB ──►  25.5 MB ──►  26.5 MB  (Single Mac / GPU)
+VRAM:  78.6 MB ──► 78.6 MB ──►  73.6 MB ──►  26.7 MB ──►  27.8 MB  (Single Mac / GPU)
 ```
 
 > ⚠️ **Important:** Query-time complexity is O(1). Document *ingestion* scales linearly O(T) —
@@ -98,8 +98,9 @@ All results below are from **System B (Neural Hippocampus)** pipeline. Factual a
 | **Compression Ratio** | 3.6:1 | 53.9:1 | 2,793:1 | 53,793:1 | 374,533:1 | **517,633:1** |
 | **Neural SLM Ingestion**† | ~2.3 s | ~45 s | ~1.9 h | ~13.5 h | ~5.6 **days** | ~5.6 **days** |
 | **Net ΔRSS Growth** | +0.0 MB | +0.1 MB | +44.9 MB | +8.0 MB | +0.1 MB | **+0.16 MB** |
+| **Working Memory KV-Cache (SI MB)** | 48.6 MB | 48.6 MB | 73.6 MB | 26.7 MB | 38.4 MB | 27.8 MB |
 | **Full Attention KV-Cache** | 0.17 GB | 2.62 GB | 205.4 GB | 1.44 TB | 14.38 TB | **14.38 TB** |
-| **KV-Cache Reduction** | 3.6× | 53.9× | 2,930× | 56,470× | 392,896× | **542,641×** |
+| **KV-Cache Reduction** | 3.5× | 53.9× | 2,792× | 53,933× | 374,479× | **517,266×** |
 | **Factual Recall** | 12/12 (100%) | 5/5 (100%) | 9/9 (100%) | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) |
 
 > †Neural SLM latency = full SmolLM2-1.7B semantic distillation, async background daemon.
