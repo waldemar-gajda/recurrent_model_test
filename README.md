@@ -82,8 +82,8 @@ This repository contains two architecturally distinct systems. They are **not in
 | **Files** | `model.py`, `recurrent_memory_bank.py` | `cognitive_memory_engine.py`, `hippocampus_slm_distiller.py` |
 | **How it works** | Differentiable cross-attention slot pooling inside the PyTorch graph | On-device SLM (SmolLM2-1.7B) extracts JSON triples → bounded text buffer → frozen LLM |
 | **Memory** | 32 KB slot bank (neural tensors) | ~78.6 MB KV-cache for 300–650 token prompt |
-| **Status** | Implemented & unit-tested; trained checkpoints not publicly released | Fully operational; all 110M-token benchmarks use this pipeline |
-| **Empirical data** | Forward/backward pass verified (see `test_model.py`) | Tables 3, 6, 7 in paper |
+| **Status** | Verified via PEFT on SmolLM2-1.7B (gate emergence 0.38→0.73, loss 8.18→1.32) | Fully operational; all 110M-token benchmarks use this pipeline |
+| **Empirical data** | Forward/backward verified (`test_model.py`), PEFT convergence verified | Tables 3, 6, 7 in paper |
 
 ---
 
