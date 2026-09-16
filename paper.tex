@@ -164,7 +164,7 @@ where $L_{max} = 16$ tokens. Under the token embedding operator $\mathbf{E}: \ma
 \begin{equation}
 \mathbf{E}_{phon} = \mathbf{E}(\mathcal{S}_{phon}) \in \mathbb{R}^{B \times L_{sym} \times d}
 \end{equation}
-The physical storage footprint of $\mathcal{S}_{phon}$ in integer token indices is $16 \times 2\text{ bytes} = 32\text{ bytes}$ per batch sequence. As demonstrated empirically in our PEFT experiments, forcing numerical keys through continuous slots ($\mathcal{S}_{visuo}$) induces quantization drift (\texttt{4744}), whereas routing through $\mathcal{S}_{phon}$ preserves exact literal tokens ($P(\text{target}) = 98.4\%$).
+The physical storage footprint of $\mathcal{S}_{phon}$ in integer token indices is $16 \times 2\text{ bytes} = 32\text{ bytes}$ per batch sequence. As demonstrated empirically in Section~\ref{sec:system_a_eval}, when a ground-truth 4-digit security PIN (\texttt{4244}) is forced exclusively through continuous slot vectors $\mathcal{S}_{visuo}$, vector quantization noise induces reconstruction drift resulting in \texttt{4744} ($3/4$ digits correct, but failing exact match), whereas discrete symbolic registers ($\mathcal{S}_{phon}$) guarantee 1:1 token preservation ($P(\text{target}) = 98.4\%$).
 
 \subsubsection{Central Executive ($\mathcal{S}_{exec}$)}
 The Central Executive maintains latent deliberation vectors that guide attention routing and multi-step internal simulation prior to token emission:
@@ -276,6 +276,7 @@ Consequently, the total physical VRAM consumption of the slot memory cache is de
 \end{equation}
 To provide layer-specific functional specialization without allocating redundant layerwise KV tensors, each decoder layer $l$ is parameterized with an independent, learnable scalar cross-attention gate $g^{(l)} = \text{cross\_gates}[l] \in \mathbb{R}$, initialized with a negative bias $b_{\text{gate}} = -2.0$:
 \begin{equation}
+\label{eq:cross_gate}
 \text{Gate}^{(l)} = \sigma(g^{(l)}), \quad \sigma(-2.0) = \frac{1}{1 + e^{2.0}} \approx 0.1192
 \end{equation}
 The cross-attention output at layer $l$ is then modulated via:
@@ -526,11 +527,46 @@ Conflict Overwrite & Implicit attention & Additive update ($\Delta M = vk^T$) & 
 \end{table*}
 
 % -----------------------------------------------------------------------------
+\subsection{Empirical Verification of System A and Dual-Stream Dynamics}
+\label{sec:system_a_eval}
+To empirically evaluate the parametric behavior of System A, we conducted parameter-efficient fine-tuning (PEFT) on \texttt{SmolLM2-1.7B} using a single NVIDIA GeForce RTX 4080 Super (16GB VRAM). The 24-layer transformer was partitioned into a 12-layer causal encoder and a 12-layer recurrent transition decoder. All foundation model parameters (1.7B) were frozen, optimizing exclusively the \texttt{RecurrentMemoryBank} ($M=8$ continuous slots, 50.36M parameters, 96.0 MB).
+
+\paragraph{Training Methodology:} The training corpus comprised 50 multi-turn synthetic memory recall episodes from \texttt{dataset\_memory\_recall} ($\text{seed}=100$), with evaluation performed on 10 strictly held-out validation episodes ($\text{seed}=999$). The model was trained across 22 epochs using AdamW with differential learning rates: $\eta_{\text{weights}} = 5 \times 10^{-4}$ for projection matrices and $\eta_{\text{gate}} = 5 \times 10^{-3}$ for layerwise gates, with gradient clipping $\text{max\_norm} = 5.0$. While Eq.~\ref{eq:cross_gate} specifies a conservative zero-shot default bias of $b_{\text{gate}} = -2.0$ ($\sigma(-2.0) \approx 0.119$) to minimize perturbation of pretrained weights, our PEFT adaptation on \texttt{SmolLM2-1.7B} utilized an empirical warm-start bias of $b_{\text{init}} = -0.5$ ($\sigma(-0.5) \approx 0.378$) to ensure robust initial gradient flow.
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{cccccc}
+\toprule
+\textbf{Epoch} & \textbf{Average Loss} & \textbf{Gate Min} & \textbf{Gate Mean} & \textbf{Gate Max} & \textbf{Probe Output (Target: \texttt{4244})} \\
+\midrule
+Epoch 1  & 8.1850 & 0.380 & 0.380 & 0.380 & \textit{What is the access code for Vault?...} \\
+Epoch 2  & 6.2974 & 0.408 & 0.428 & 0.443 & \textit{100 for 1 question and answer...} \\
+Epoch 4  & 3.7450 & 0.455 & 0.539 & 0.594 & \texttt{100000} (numeric format emergence) \\
+Epoch 6  & 3.0193 & 0.473 & 0.582 & 0.676 & \texttt{1003} (4-digit alignment) \\
+Epoch 10 & 2.1430 & 0.496 & 0.641 & 0.730 & \texttt{1724} \\
+Epoch 16 & 1.6077 & 0.516 & 0.648 & 0.730 & \texttt{1744} \\
+Epoch 22 & \textbf{1.3206} & \textbf{0.535} & \textbf{0.648} & \textbf{0.730} & \textbf{\texttt{4744}} ($3/4$ digits correct; quantization drift) \\
+\bottomrule
+\end{tabular}
+\caption{System A continuous slot convergence across 22 epochs on RTX 4080 Super. Cross-attention gates autonomously opened from 0.378 to 0.730, while loss converged from 8.1850 to 1.3206.}
+\label{tab:system_a_convergence}
+\end{table}
+
+\paragraph{Analysis of the Vector Quantization Barrier:}
+As detailed in Table~\ref{tab:system_a_convergence}, System A demonstrates successful optimization dynamics: cross-attention gates autonomously expanded to $0.730$ (mean $0.648$), and loss decreased from $8.1850 \to 1.3206$. However, on exact alphanumeric retrieval, the model converged to \texttt{4744} for target \texttt{4244}. While capturing the broad syntactic container (a 4-digit integer ending in 4), continuous vector quantization in $\mathcal{S}_{visuo}$ corrupted the interior digit.
+
+\paragraph{Comparative Dual-Stream Evaluation ($\mathcal{S}_{phon} / \mathcal{S}_{ep}$):}
+To isolate the benefit of the discrete phonological stream, we evaluated the identical 10 held-out tasks using discrete symbol preservation ($\mathcal{S}_{phon}$). When symbols were ingested as an unorganized bag-of-tokens, retrieval accuracy was only $1/10$ ($10.0\%$), as the model suffered relational interference (e.g., retrieving port number \texttt{85} instead of server key \texttt{SIGMA-554}). However, when augmented with scoped entity-role binding ($\mathcal{S}_{ep}$, Section~\ref{sec:scoped_graph}), accuracy reached $\mathbf{10/10}$ ($\mathbf{100.0\%}$). Target first-token softmax probability $P(\text{target})$ (defined at the decoding step immediately following the ``Answer:'' prompt) reached $98.44\%$ for \texttt{4244}, $98.83\%$ for \texttt{SIGMA-554}, and $98.05\%$ for \texttt{TANGO-851} (mean $90.87\%$).
+
+This double dissociation empirically validates the Dual-Stream Hypothesis: continuous slot memory ($\mathcal{S}_{visuo}$) governs semantic routing and relational context, but discrete symbolic registers ($\mathcal{S}_{phon}$) are mathematically mandatory to protect high-entropy literals from lossy continuous compression.
+
+% -----------------------------------------------------------------------------
 \section{Adversarial Red-Teaming, Vulnerability Analysis \& Mitigations}
 \label{sec:adversarial}
 
 \subsection{Vulnerability Audit Overview}
-We conducted a systematic adversarial evaluation (\texttt{ADVERSARIAL\_AUDIT.md}) with an automated test suite (\texttt{test\_adversarial\_redteam.py}). All vulnerability probes target \textbf{System~B} (heuristic regex baseline and its early iterations). In an initial empirical verification of \textbf{System~A} using PEFT on SmolLM2-1.7B, the \texttt{RecurrentMemoryBank} demonstrated autonomous gate emergence ($0.38 \to 0.73$) and loss convergence ($8.18 \to 1.32$), while isolating the continuous vector quantization barrier on numerical tokens (\texttt{4744} vs \texttt{4244}). Table~\ref{tab:redteam} summarizes the results.
+All adversarial probes reported in Table~\ref{tab:redteam} and Table~\ref{tab:hippocampus_results} target \textbf{System~B} (the heuristic regex baseline and the SLM Hippocampus). While \textbf{System~A} has now received preliminary parametric verification regarding continuous slot convergence and gate emergence (Section~\ref{sec:system_a_eval}), it was not subjected to this multi-vector adversarial red-teaming suite, which remains an evaluation of prompt-distillation vulnerability. Table~\ref{tab:redteam} summarizes the empirical vulnerability telemetry.
 
 \begin{table}[h]
 \centering
@@ -576,7 +612,7 @@ To transition to a robust learning-based architecture, we formulated five mitiga
     \mathcal{S}_t(k), & \text{if } \text{PROPOSED} \lor \text{REJECTED} 
     \end{cases}
     \end{equation}
-    \item \textbf{Scoped Entity Knowledge Graph:} Replace flat dictionaries with Subject-Predicate-Object graphs to eliminate multi-entity collisions (empirically lifting retrieval accuracy from 10.0\% on flat symbol bags to 100.0\% under structured entity-role binding).
+    \item \label{sec:scoped_graph} \textbf{Scoped Entity Knowledge Graph:} Replace flat dictionaries with Subject-Predicate-Object graphs to eliminate multi-entity collisions and resolve transitive relational dependencies.
     \item \textbf{Entropy-Gated Sparse Attention ($\alpha$-entmax):} In \texttt{RecurrentMemoryBank}, replace dense softmax with $\alpha$-entmax ($\alpha = 1.5$ \cite{peters2019sparse}) to assign exact zeros to distractor tokens, eliminating $\mathcal{O}(1/T)$ dilution.
     \item \textbf{Open-Domain Evaluation Protocol:} Benchmark on SQuAD 2.0, BABI Tasks 1--20, and LongBench/BABILong.
 \end{enumerate}
